@@ -240,6 +240,7 @@ function App() {
         ref={inputRef}
         type="file"
         className="hidden"
+        style={{ display: 'none' }}
         onChange={handleFolderSelect}
         {...({ webkitdirectory: 'true' } as Record<string, string>)}
       />
