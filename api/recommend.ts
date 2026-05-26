@@ -32,7 +32,8 @@ Example: ["src/App.tsx", "src/contexts/AuthContext.tsx"]`
   const data = await response.json()
   console.log('Claude response:', JSON.stringify(data, null, 2))
   const text = data.content[0].text
-  const recommended = JSON.parse(text)
+  const clean = text.replace(/```json\n?|\n?```/g, '').trim()
+  const recommended = JSON.parse(clean)
 
   res.json({ recommended })
 }
