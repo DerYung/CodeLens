@@ -263,6 +263,18 @@ body {
   line-height: 1.7;
   font-size: 14px;
 }
+/* Each section skips layout/paint while off-screen. `auto` in
+   contain-intrinsic-size lets the browser remember a section's real height
+   once rendered, so the scrollbar stays stable. */
+.doc-section {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 500px;
+}
+/* Collapse the leading heading's top margin so split sections don't add a gap
+   that the single-block render didn't have. */
+.doc-section > :first-child > :first-child {
+  margin-top: 0;
+}
 .prose-doc h1,
 .prose-doc h2,
 .prose-doc h3,

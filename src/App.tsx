@@ -26,6 +26,34 @@ function displayPath(path: string): string {
   return firstSlash === -1 ? path : path.slice(firstSlash + 1)
 }
 
+// Split markdown into heading-delimited sections so each can be wrapped with
+// `content-visibility: auto` — the browser then skips layout/paint for the
+// sections that are off-screen, keeping scroll smooth on very long docs.
+// Headings inside fenced code blocks are ignored so blocks never get split.
+function splitIntoSections(md: string): string[] {
+  const lines = md.split('\n')
+  const sections: string[] = []
+  let current: string[] = []
+  let fenceToken = ''
+
+  for (const line of lines) {
+    const fence = line.match(/^\s*(```|~~~)/)?.[1]
+    if (fence) {
+      if (!fenceToken) fenceToken = fence
+      else if (fence === fenceToken) fenceToken = ''
+    }
+
+    const isHeading = !fenceToken && /^#{1,6}\s/.test(line)
+    if (isHeading && current.some(l => l.trim() !== '')) {
+      sections.push(current.join('\n'))
+      current = []
+    }
+    current.push(line)
+  }
+  if (current.length) sections.push(current.join('\n'))
+  return sections
+}
+
 // Recursively walk a DataTransfer file-system entry (drag-drop folder).
 type FsEntry = {
   isFile: boolean
@@ -494,6 +522,8 @@ function OutputStage({
   onDownload: () => void
   onReset: () => void
 }) {
+  const sections = useMemo(() => splitIntoSections(documentation), [documentation])
+
   return (
     <div className="animate-fade-in">
       <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
@@ -536,7 +566,11 @@ function OutputStage({
           <span className="ml-3 tracking-wide">documentation.md</span>
         </div>
         <div className="px-6 py-5 prose-doc">
-          <ReactMarkdown>{documentation}</ReactMarkdown>
+          {sections.map((section, i) => (
+            <section key={i} className="doc-section">
+              <ReactMarkdown>{section}</ReactMarkdown>
+            </section>
+          ))}
         </div>
       </div>
     </div>
