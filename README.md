@@ -1,73 +1,118 @@
-# React + TypeScript + Vite
+# CodeLens
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+> Your codebase, documenting itself.
 
-Currently, two official plugins are available:
+AI-powered documentation generator that turns any project folder into clear, structured docs in seconds. No CLI, no setup, no prompt engineering required.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+**Live Demo:** [https://code-lens-ebon.vercel.app](https://code-lens-ebon.vercel.app)
 
-## React Compiler
+---
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## What It Does
 
-## Expanding the ESLint configuration
+Upload a project folder → AI scans the structure → recommends the most important files → generates a clean Markdown documentation you can copy or download.
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+Built for:
+- New hires joining a team and trying to understand the codebase
+- Freelancers inheriting client projects with no documentation
+- Non-technical PMs who need to understand what their engineers built
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+---
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+## How It Works
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```
+1. Drop or select your project folder
+2. AI recommends the key files worth documenting
+3. Confirm or adjust the selection
+4. Get clean Markdown documentation — copy or download
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Behind the scenes, CodeLens runs a three-stage pipeline:
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+- **Stage B (scan):** Claude reads only the file names to identify the most important files
+- **Stage C (select):** Recommended files are pre-checked; user can adjust
+- **Stage A (analyze):** Selected files are sent to Claude in batches of 3–4 to avoid token limits, then merged into one document
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|------|-----------|
+| Frontend | React 18 + TypeScript + Vite |
+| Styling | Tailwind CSS |
+| State | Zustand |
+| Markdown rendering | React Markdown |
+| API proxy | Vercel Serverless Functions |
+| AI | Claude API (Sonnet) |
+| Deployment | Vercel |
+
+---
+
+## Running Locally
+
+### Prerequisites
+- Node.js 18+
+- An Anthropic API key from [console.anthropic.com](https://console.anthropic.com)
+
+### Setup
+
+```bash
+git clone https://github.com/DerYung/CodeLens.git
+cd CodeLens
+npm install
 ```
+
+Create a `.env.local` file in the root:
+
+```
+ANTHROPIC_API_KEY=your_api_key_here
+```
+
+### Run
+
+Open two terminals.
+
+**Terminal 1 — local API server:**
+```bash
+npx tsx --env-file=.env.local server.ts
+```
+
+**Terminal 2 — frontend:**
+```bash
+npm run dev
+```
+
+Then open [http://localhost:5173](http://localhost:5173).
+
+---
+
+## Project Structure
+
+```
+codelens/
+├── api/                    # Vercel Serverless Functions (production)
+│   ├── recommend.ts        # Recommends important files
+│   └── analyze.ts          # Generates documentation
+├── src/
+│   ├── App.tsx             # Main app with stage management
+│   ├── components/         # UI components
+│   └── store/              # Zustand state
+├── server.ts               # Local Express dev server (mirrors api/)
+└── vite.config.ts
+```
+
+> **Note:** `server.ts` and the files under `api/` implement the same logic. The Express server is for local development; the Vercel functions handle production. Any change to one must be mirrored in the other.
+
+---
+
+## Built For
+
+Shortcut Asia Internship Challenge 2026
+
+---
+
+## License
+
+MIT
