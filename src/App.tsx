@@ -20,6 +20,12 @@ function shouldKeepFile(file: File, path: string): boolean {
   return ALLOWED_EXTS.includes(ext || '')
 }
 
+// Strip the leading project-root folder so `CodeLens/src/App.tsx` → `src/App.tsx`.
+function displayPath(path: string): string {
+  const firstSlash = path.indexOf('/')
+  return firstSlash === -1 ? path : path.slice(firstSlash + 1)
+}
+
 // Recursively walk a DataTransfer file-system entry (drag-drop folder).
 type FsEntry = {
   isFile: boolean
@@ -405,14 +411,15 @@ function FileRow({
   isSelected: boolean
   onToggle: () => void
 }) {
-  const lastSlash = file.path.lastIndexOf('/')
-  const dir = lastSlash >= 0 ? file.path.slice(0, lastSlash + 1) : ''
-  const name = lastSlash >= 0 ? file.path.slice(lastSlash + 1) : file.path
+  const shown = displayPath(file.path)
+  const lastSlash = shown.lastIndexOf('/')
+  const dir = lastSlash >= 0 ? shown.slice(0, lastSlash + 1) : ''
+  const name = lastSlash >= 0 ? shown.slice(lastSlash + 1) : shown
 
   return (
     <label
-      className={`file-row ${
-        isSelected ? 'is-selected' : ''
+      className={`file-row ${isSelected ? 'is-selected' : ''} ${
+        isRecommended ? 'is-recommended' : ''
       } flex items-center gap-3 px-4 py-2.5 cursor-pointer border-b border-[#21262d] last:border-b-0 text-[12px]`}
     >
       <input
