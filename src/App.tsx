@@ -288,18 +288,83 @@ function Header() {
   return (
     <header className="border-b border-[#30363d] bg-[#0d1117]/80 backdrop-blur supports-[backdrop-filter]:bg-[#0d1117]/60 sticky top-0 z-10">
       <div className="max-w-3xl mx-auto px-6 h-14 flex items-center gap-3">
-        <span className="text-[#22c55e] text-lg leading-none select-none transition-transform duration-200 hover:rotate-180">
-          ⬡
-        </span>
-        <h1 className="text-[#22c55e] font-bold tracking-[0.08em] text-sm uppercase">
+        <LensLogo />
+        <h1 className="text-[#34D399] font-bold tracking-[0.08em] text-sm uppercase">
           CodeLens
         </h1>
-        <span className="text-[#484f58] text-xs ml-1">
-          <span className="text-[#6e7681]">//</span>{' '}
-          AI-powered code documentation
-        </span>
       </div>
     </header>
+  )
+}
+
+// Animated lens mark: two counter-spinning rings around a `< / >` code symbol.
+function LensLogo() {
+  return (
+    <div className="lens-logo relative w-8 h-8 shrink-0 drop-shadow-[0_0_6px_rgba(52,211,153,0.45)]">
+      <svg viewBox="0 0 100 100" className="w-full h-full overflow-visible">
+        {/* Outer glow ring */}
+        <circle
+          cx="50"
+          cy="50"
+          r="46"
+          fill="none"
+          stroke="url(#lens-grad)"
+          strokeWidth="2"
+          className="opacity-50"
+        />
+
+        {/* Outer spinning ring + focus points */}
+        <g className="lens-ring-outer">
+          <circle
+            cx="50"
+            cy="50"
+            r="42"
+            fill="none"
+            stroke="#34D399"
+            strokeWidth="1.5"
+            strokeDasharray="4 8"
+            className="opacity-70"
+          />
+          <circle cx="50" cy="8" r="2" fill="#34D399" />
+          <circle cx="50" cy="92" r="2" fill="#34D399" />
+          <circle cx="8" cy="50" r="2" fill="#34D399" />
+          <circle cx="92" cy="50" r="2" fill="#34D399" />
+        </g>
+
+        {/* Inner spinning ring */}
+        <g className="lens-ring-inner">
+          <circle
+            cx="50"
+            cy="50"
+            r="34"
+            fill="none"
+            stroke="#6EE7B7"
+            strokeWidth="2.5"
+            strokeDasharray="1 4"
+            className="opacity-50"
+          />
+        </g>
+
+        {/* Core glass + glare */}
+        <circle cx="50" cy="50" r="28" fill="#0d1117" stroke="#30363d" strokeWidth="1.5" />
+        <path d="M 30 30 Q 50 15 70 30 A 25 25 0 0 0 30 30" fill="rgba(255,255,255,0.05)" />
+
+        {/* < / > code symbol */}
+        <g strokeLinecap="round" strokeLinejoin="round" fill="none" strokeWidth="4">
+          <path d="M 40 40 L 30 50 L 40 60" stroke="#34D399" className="lens-bracket-l" />
+          <path d="M 55 35 L 45 65" stroke="#6EE7B7" className="lens-slash" />
+          <path d="M 60 40 L 70 50 L 60 60" stroke="#34D399" className="lens-bracket-r" />
+        </g>
+
+        <defs>
+          <linearGradient id="lens-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#34D399" />
+            <stop offset="50%" stopColor="transparent" />
+            <stop offset="100%" stopColor="#6EE7B7" />
+          </linearGradient>
+        </defs>
+      </svg>
+    </div>
   )
 }
 
@@ -316,33 +381,74 @@ function UploadStage({
   onClick: () => void
   onDrop: (e: React.DragEvent<HTMLDivElement>) => void
 }) {
+  const [showHow, setShowHow] = useState(false)
+
   return (
-    <div className="animate-fade-in flex items-center justify-center min-h-[60vh]">
-      <div
-        onClick={onClick}
-        onDragOver={e => {
-          e.preventDefault()
-          setIsDragging(true)
-        }}
-        onDragLeave={() => setIsDragging(false)}
-        onDrop={onDrop}
-        className={`upload-zone ${
-          isDragging ? 'is-dragging' : ''
-        } w-full cursor-pointer rounded-xl border-2 border-dashed border-[#30363d] bg-[#0d1117] px-10 py-16 text-center`}
-      >
-        <div className="text-[#22c55e] text-5xl mb-5 leading-none select-none">
-          ⬢
+    <div
+      onDragOver={e => {
+        e.preventDefault()
+        setIsDragging(true)
+      }}
+      onDragLeave={() => setIsDragging(false)}
+      onDrop={onDrop}
+      className={`hero ${
+        isDragging ? 'is-dragging' : ''
+      } animate-fade-in flex flex-col justify-center min-h-[72vh] rounded-2xl px-2`}
+    >
+      <div className="font-mono text-xs tracking-[0.3em] text-[#34D399] uppercase mb-4">
+        CodeLens <span className="text-[#6e7681]">//</span> Doc Generator
+      </div>
+
+      <h1 className="font-serif text-4xl md:text-5xl lg:text-6xl text-[#e6edf3] mb-6 leading-[1.05]">
+        Your codebase,
+        <br />
+        documenting itself.
+      </h1>
+
+      <p className="font-sans text-lg text-[#8b949e] max-w-xl mb-8 leading-relaxed">
+        AI-powered documentation that explains your project from its own
+        source. Drop a folder and get clear, structured docs — no config, no
+        setup headaches.
+      </p>
+
+      <div className="flex flex-col sm:flex-row gap-4">
+        <button onClick={onClick} className="hero-btn-primary font-mono text-sm">
+          Upload your project
+        </button>
+        <button
+          onClick={() => setShowHow(v => !v)}
+          className="hero-btn-secondary font-mono text-sm"
+        >
+          See how it works
+        </button>
+      </div>
+
+      {showHow && (
+        <div className="animate-fade-in surface rounded-lg mt-6 px-5 py-4 max-w-xl font-mono text-[12px] text-[#8b949e] space-y-2">
+          <div>
+            <span className="text-[#34D399]">1 ▸</span> Drop or select your
+            project folder
+          </div>
+          <div>
+            <span className="text-[#34D399]">2 ▸</span> We recommend the key
+            files worth documenting
+          </div>
+          <div>
+            <span className="text-[#34D399]">3 ▸</span> Claude generates clean
+            Markdown you can copy or download
+          </div>
         </div>
-        <p className="text-[#e6edf3] text-base">
-          Drop your project folder here
-        </p>
-        <p className="text-[#8b949e] text-xs mt-2">
-          or click to select
-        </p>
-        <div className="mt-8 inline-flex items-center gap-2 text-[11px] text-[#484f58]">
-          <span className="text-[#22c55e]">$</span>
+      )}
+
+      <div className="mt-8 flex flex-col gap-2">
+        <div className="inline-flex items-center gap-2 font-mono text-[11px] text-[#484f58]">
+          <span className="text-[#34D399]">$</span>
           <span>supports</span>
           <code className="text-[#8b949e]">.tsx .ts .js .jsx .py .java .json .md</code>
+        </div>
+        <div className="font-mono text-[11px] tracking-[0.15em] uppercase text-[#34D399]/60">
+          v0.0.0 <span className="opacity-50">·</span> drag &amp; drop anywhere{' '}
+          <span className="opacity-50">·</span> powered by claude
         </div>
       </div>
     </div>
@@ -373,13 +479,13 @@ function SelectStage({
   return (
     <div className="animate-fade-in">
       <div className="flex items-baseline justify-between flex-wrap gap-2 mb-1">
-        <p className="text-[#22c55e] text-sm tracking-wide">
+        <p className="text-[#34D399] text-sm tracking-wide">
           <span className="mr-1">▶</span> {files.length} files scanned
         </p>
         <div className="flex items-center gap-3 text-[11px] text-[#8b949e]">
           <button
             onClick={onSelectRecommended}
-            className="hover:text-[#22c55e] transition-colors"
+            className="hover:text-[#34D399] transition-colors"
           >
             recommended
           </button>
@@ -394,7 +500,7 @@ function SelectStage({
         </div>
       </div>
       <p className="text-[#8b949e] text-xs mb-4">
-        <span className="text-[#22c55e]">⭐</span> Recommended files are
+        <span className="text-[#34D399]">⭐</span> Recommended files are
         pre-selected. Adjust if needed.
       </p>
 
@@ -461,7 +567,7 @@ function FileRow({
         <span className="text-[#e6edf3]">{name}</span>
       </span>
       {isRecommended && (
-        <span className="text-[10px] text-[#22c55e] tracking-wider uppercase whitespace-nowrap">
+        <span className="text-[10px] text-[#34D399] tracking-wider uppercase whitespace-nowrap">
           ⭐ recommended
         </span>
       )}
@@ -483,7 +589,7 @@ function LoadingStage() {
   )
   return (
     <div className="animate-fade-in flex flex-col items-center justify-center min-h-[60vh] text-center">
-      <div className="text-[#22c55e] text-6xl mb-6 animate-hex-pulse select-none">
+      <div className="text-[#34D399] text-6xl mb-6 animate-hex-pulse select-none">
         ⬡
       </div>
       <p className="text-[#e6edf3] text-base">
@@ -494,7 +600,7 @@ function LoadingStage() {
       <div className="mt-10 surface rounded-lg px-4 py-3 text-[11px] text-[#8b949e] text-left w-full max-w-sm">
         {lines.map((l, i) => (
           <div key={l} className="flex items-center gap-2">
-            <span className="text-[#22c55e]">
+            <span className="text-[#34D399]">
               {i === lines.length - 1 ? '▸' : '✓'}
             </span>
             <span className={i === lines.length - 1 ? 'text-[#e6edf3]' : ''}>
@@ -527,7 +633,7 @@ function OutputStage({
   return (
     <div className="animate-fade-in">
       <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
-        <p className="text-[#22c55e] text-sm tracking-wide">
+        <p className="text-[#34D399] text-sm tracking-wide">
           <span className="mr-1">✓</span> Documentation generated
         </p>
         <div className="flex items-center gap-2">
