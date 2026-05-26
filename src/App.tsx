@@ -11,15 +11,69 @@ interface ProjectFile {
 type Stage = 'upload' | 'select' | 'loading' | 'output'
 
 const ALLOWED_EXTS = ['ts', 'tsx', 'js', 'jsx', 'py', 'java', 'json', 'md']
-const IGNORED_DIRS = ['node_modules/', 'dist/', 'build/', '.git/', '.next/']
-const IGNORED_FILES = new Set(['package-lock.json', 'yarn.lock', 'pnpm-lock.yaml'])
 
-function shouldKeepFile(file: File, path: string): boolean {
-  if (IGNORED_DIRS.some(d => path.includes(d))) return false
-  if (IGNORED_FILES.has(file.name)) return false
-  const ext = file.name.split('.').pop()?.toLowerCase()
-  return ALLOWED_EXTS.includes(ext || '')
+// Directory names whose entire subtree is skipped. Matched per path-segment
+// (not substring) so a real folder like `mytarget/` isn't caught by `target`.
+const IGNORED_DIRS = new Set([
+  'node_modules',
+  'dist',
+  'build',
+  '.git',
+  // Python virtual envs
+  'venv', '.venv', 'env', '.env',
+  // Python deps / artifacts
+  'site-packages', '__pycache__',
+  // PHP / Go dependencies
+  'vendor',
+  // Rust / Java (Maven) build output
+  'target',
+  // Next / Nuxt build output
+  '.next', '.nuxt', 'out',
+  // Build caches
+  '.cache', '.parcel-cache',
+  // Test coverage output
+  'coverage',
+])
+const IGNORED_FILES = new Set(['package-lock.json', 'yarn.lock', 'pnpm-lock.yaml'])
+// Compiled artifacts to drop even if their extension were otherwise allowed.
+const IGNORED_EXTS = new Set(['pyc'])
+
+// Human-readable group each ignored directory rolls up into, for the
+// "files filtered" breakdown shown to users.
+const DIR_GROUP: Record<string, string> = {
+  node_modules: 'node_modules',
+  venv: 'venv / site-packages',
+  '.venv': 'venv / site-packages',
+  env: 'venv / site-packages',
+  '.env': 'venv / site-packages',
+  'site-packages': 'venv / site-packages',
+  __pycache__: 'venv / site-packages',
+  vendor: 'vendor',
+  dist: 'build artifacts',
+  build: 'build artifacts',
+  target: 'build artifacts',
+  '.next': 'build artifacts',
+  '.nuxt': 'build artifacts',
+  out: 'build artifacts',
+  '.cache': 'build artifacts',
+  '.parcel-cache': 'build artifacts',
+  coverage: 'build artifacts',
+  '.git': '.git',
 }
+
+// Why a file was filtered out, or null if it should be kept. Order mirrors the
+// keep/skip precedence so the breakdown counts add up to total − kept.
+function filterReason(file: File, path: string): string | null {
+  const dirSeg = path.split('/').slice(0, -1).find(seg => IGNORED_DIRS.has(seg))
+  if (dirSeg) return DIR_GROUP[dirSeg] ?? 'dependencies'
+  if (IGNORED_FILES.has(file.name)) return 'lock files'
+  const ext = file.name.split('.').pop()?.toLowerCase()
+  if (IGNORED_EXTS.has(ext || '')) return 'venv / site-packages'
+  if (!ALLOWED_EXTS.includes(ext || '')) return 'other file types'
+  return null
+}
+
+type FilterStat = { label: string; count: number }
 
 // Strip the leading project-root folder so `CodeLens/src/App.tsx` → `src/App.tsx`.
 function displayPath(path: string): string {
@@ -91,6 +145,7 @@ async function walkEntry(
 
 function App() {
   const [files, setFiles] = useState<ProjectFile[]>([])
+  const [filterStats, setFilterStats] = useState<FilterStat[]>([])
   const [recommended, setRecommended] = useState<string[]>([])
   const [selected, setSelected] = useState<string[]>([])
   const [documentation, setDocumentation] = useState<string>('')
@@ -116,7 +171,17 @@ function App() {
         body: JSON.stringify({ filePaths }),
       })
       const data = await res.json()
-      const rec: string[] = data.recommended ?? []
+      // The model can return paths that don't exactly match a scanned file
+      // (reformatted/hallucinated) or duplicates. Keep only real, unique file
+      // paths — otherwise a phantom entry inflates the "selected" count with
+      // no checkbox to ever uncheck it.
+      const valid = new Set(filePaths)
+      const seen = new Set<string>()
+      const rec: string[] = (data.recommended ?? []).filter((p: string) => {
+        if (!valid.has(p) || seen.has(p)) return false
+        seen.add(p)
+        return true
+      })
       setRecommended(rec)
       setSelected(rec)
     } catch (err) {
@@ -127,10 +192,22 @@ function App() {
   }
 
   const ingestRaw = (raw: { file: File; path: string }[]) => {
-    const kept = raw
-      .filter(({ file, path }) => shouldKeepFile(file, path))
-      .map(({ file, path }) => ({ name: file.name, path, file }))
+    const kept: ProjectFile[] = []
+    const counts = new Map<string, number>()
+    for (const { file, path } of raw) {
+      const reason = filterReason(file, path)
+      if (reason === null) {
+        kept.push({ name: file.name, path, file })
+      } else {
+        counts.set(reason, (counts.get(reason) ?? 0) + 1)
+      }
+    }
     setFiles(kept)
+    setFilterStats(
+      [...counts.entries()]
+        .map(([label, count]) => ({ label, count }))
+        .sort((a, b) => b.count - a.count)
+    )
     if (kept.length) fetchRecommended(kept.map(f => f.path))
   }
 
@@ -198,6 +275,7 @@ function App() {
 
   const reset = () => {
     setFiles([])
+    setFilterStats([])
     setRecommended([])
     setSelected([])
     setDocumentation('')
@@ -248,6 +326,7 @@ function App() {
         {stage === 'select' && (
           <SelectStage
             files={files}
+            filterStats={filterStats}
             recommended={recommended}
             selected={selected}
             onToggle={toggleSelect}
@@ -458,8 +537,48 @@ function UploadStage({
 
 /* ─────────────────── Stage 2: File Selection ─────────────────── */
 
+// Subtle, collapsed-by-default breakdown of what the scanner filtered out.
+// Builds trust ("show me what you dropped") without cluttering the header.
+function FilteredSummary({ stats }: { stats: FilterStat[] }) {
+  const [open, setOpen] = useState(false)
+  const total = stats.reduce((sum, s) => sum + s.count, 0)
+  if (total === 0) return null
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen(o => !o)}
+        aria-expanded={open}
+        className="font-mono text-[11px] text-[#6e7681] hover:text-[#8b949e] transition-colors"
+      >
+        <span className="inline-block w-2.5 text-[9px] align-middle">
+          {open ? '▲' : '▼'}
+        </span>{' '}
+        {total} files filtered
+      </button>
+
+      {open && (
+        <div className="absolute left-0 top-full mt-1.5 z-20 min-w-[240px] surface rounded-md px-3 py-2.5 shadow-xl animate-fade-in">
+          <ul className="space-y-1.5">
+            {stats.map(s => (
+              <li
+                key={s.label}
+                className="flex items-center justify-between gap-6 font-mono text-[11px]"
+              >
+                <span className="text-[#8b949e]">{s.label}</span>
+                <span className="text-[#56606b] tabular-nums">{s.count}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function SelectStage({
   files,
+  filterStats,
   recommended,
   selected,
   onToggle,
@@ -469,6 +588,7 @@ function SelectStage({
   onGenerate,
 }: {
   files: ProjectFile[]
+  filterStats: FilterStat[]
   recommended: string[]
   selected: string[]
   onToggle: (p: string) => void
@@ -517,9 +637,12 @@ function SelectStage({
   return (
     <div className="animate-fade-in">
       <div className="flex items-center justify-between flex-wrap gap-3 mb-3">
-        <p className="text-[#34D399] text-sm tracking-wide font-mono">
-          <span className="mr-1">▶</span> {files.length} files scanned
-        </p>
+        <div className="flex items-center gap-3">
+          <p className="text-[#34D399] text-sm tracking-wide font-mono">
+            <span className="mr-1">▶</span> {files.length} files scanned
+          </p>
+          <FilteredSummary stats={filterStats} />
+        </div>
 
         {/* Segmented filter control */}
         <div className="inline-flex items-center gap-0.5 rounded-lg bg-[#121820] border border-[#21262d] p-0.5">
