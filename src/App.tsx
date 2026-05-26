@@ -1,5 +1,6 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
+import { Target } from 'lucide-react'
 
 interface ProjectFile {
   name: string
@@ -476,36 +477,83 @@ function SelectStage({
   onSelectRecommended: () => void
   onGenerate: () => void
 }) {
+  // Derive which segment is "active" from the current selection, so manual
+  // row toggles keep the segmented control in sync (no separate state).
+  const activeFilter = useMemo<'core' | 'all' | 'none' | null>(() => {
+    if (selected.length === 0) return 'none'
+    if (selected.length === files.length) return 'all'
+    const recSet = new Set(recommended)
+    if (
+      recommended.length > 0 &&
+      selected.length === recommended.length &&
+      selected.every(p => recSet.has(p))
+    ) {
+      return 'core'
+    }
+    return null
+  }, [selected, files, recommended])
+
+  const segments = [
+    { key: 'core', label: 'Core', onClick: onSelectRecommended },
+    { key: 'all', label: 'All', onClick: onSelectAll },
+    { key: 'none', label: 'None', onClick: onSelectNone },
+  ] as const
+
+  // Track scroll position to fade the bottom only while more rows remain below.
+  const listRef = useRef<HTMLDivElement>(null)
+  const [showFade, setShowFade] = useState(false)
+
+  const updateFade = useCallback(() => {
+    const el = listRef.current
+    if (!el) return
+    const more = el.scrollHeight - el.clientHeight - el.scrollTop > 4
+    setShowFade(more)
+  }, [])
+
+  useEffect(() => {
+    updateFade()
+  }, [files, updateFade])
+
   return (
     <div className="animate-fade-in">
-      <div className="flex items-baseline justify-between flex-wrap gap-2 mb-1">
-        <p className="text-[#34D399] text-sm tracking-wide">
+      <div className="flex items-center justify-between flex-wrap gap-3 mb-3">
+        <p className="text-[#34D399] text-sm tracking-wide font-mono">
           <span className="mr-1">▶</span> {files.length} files scanned
         </p>
-        <div className="flex items-center gap-3 text-[11px] text-[#8b949e]">
-          <button
-            onClick={onSelectRecommended}
-            className="hover:text-[#34D399] transition-colors"
-          >
-            recommended
-          </button>
-          <span className="text-[#30363d]">·</span>
-          <button onClick={onSelectAll} className="hover:text-[#e6edf3] transition-colors">
-            all
-          </button>
-          <span className="text-[#30363d]">·</span>
-          <button onClick={onSelectNone} className="hover:text-[#e6edf3] transition-colors">
-            none
-          </button>
+
+        {/* Segmented filter control */}
+        <div className="inline-flex items-center gap-0.5 rounded-lg bg-[#121820] border border-[#21262d] p-0.5">
+          {segments.map(seg => {
+            const active = activeFilter === seg.key
+            return (
+              <button
+                key={seg.key}
+                onClick={seg.onClick}
+                aria-pressed={active}
+                className={`px-3 py-1 rounded-md font-mono text-[11px] uppercase tracking-[0.1em] transition-all ${
+                  active
+                    ? 'bg-[#1c2530] text-[#34D399] shadow-[0_1px_2px_rgba(0,0,0,0.4)]'
+                    : 'text-[#6e7681] hover:text-[#e6edf3]'
+                }`}
+              >
+                {seg.label}
+              </button>
+            )
+          })}
         </div>
       </div>
-      <p className="text-[#8b949e] text-xs mb-4">
-        <span className="text-[#34D399]">⭐</span> Recommended files are
-        pre-selected. Adjust if needed.
+
+      <p className="text-[#8b949e] text-xs mb-4 flex items-center gap-1.5">
+        <Target size={12} className="text-[#34D399]" />
+        Core files are pre-selected. Adjust the selection as needed.
       </p>
 
-      <div className="surface rounded-lg overflow-hidden mb-5">
-        <div className="max-h-[400px] overflow-y-auto">
+      <div className="relative surface rounded-lg overflow-hidden mb-4">
+        <div
+          ref={listRef}
+          onScroll={updateFade}
+          className="max-h-[55vh] overflow-y-auto cl-scroll"
+        >
           {files.map((file, i) => {
             const isRecommended = recommended.includes(file.path)
             const isSelected = selected.includes(file.path)
@@ -520,17 +568,45 @@ function SelectStage({
             )
           })}
         </div>
+
+        {/* Fade-out hint that more rows remain below */}
+        <div
+          aria-hidden
+          className={`pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-[#161b22] to-transparent transition-opacity duration-200 ${
+            showFade ? 'opacity-100' : 'opacity-0'
+          }`}
+        />
       </div>
 
-      <button
-        onClick={onGenerate}
-        disabled={selected.length === 0}
-        className="cta-btn"
-      >
-        <span>▶</span>
-        <span>Generate Documentation ({selected.length} files selected)</span>
-      </button>
+      {/* Sticky CTA — stays visible while the page scrolls */}
+      <div className="sticky bottom-0 pt-2 pb-1 bg-gradient-to-t from-[#0d1117] via-[#0d1117] to-transparent">
+        <button
+          onClick={onGenerate}
+          disabled={selected.length === 0}
+          className="cta-btn"
+        >
+          <span>▶</span>
+          <span>
+            Generate Documentation ({selected.length} files selected)
+          </span>
+        </button>
+      </div>
     </div>
+  )
+}
+
+function CoreBadge({ selected }: { selected: boolean }) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.12em] whitespace-nowrap transition-colors ${
+        selected
+          ? 'text-[#34D399] bg-[#34D399]/10 border-[#34D399]/30'
+          : 'text-[#6e7681] bg-transparent border-[#30363d]'
+      }`}
+    >
+      <Target size={10} strokeWidth={2.5} />
+      Core File
+    </span>
   )
 }
 
@@ -551,27 +627,35 @@ function FileRow({
   const name = lastSlash >= 0 ? shown.slice(lastSlash + 1) : shown
 
   return (
-    <label
+    <div
+      role="checkbox"
+      aria-checked={isSelected}
+      tabIndex={0}
+      onClick={onToggle}
+      onKeyDown={e => {
+        if (e.key === ' ' || e.key === 'Enter') {
+          e.preventDefault()
+          onToggle()
+        }
+      }}
       className={`file-row ${isSelected ? 'is-selected' : ''} ${
         isRecommended ? 'is-recommended' : ''
-      } flex items-center gap-3 px-4 py-2.5 cursor-pointer border-b border-[#21262d] last:border-b-0 text-[12px]`}
+      } flex items-center gap-3 px-4 py-2.5 cursor-pointer border-b border-[#21262d] last:border-b-0 text-[12px] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#34D399]/60`}
     >
       <input
         type="checkbox"
-        className="cl-checkbox"
+        className="cl-checkbox pointer-events-none"
         checked={isSelected}
-        onChange={onToggle}
+        readOnly
+        tabIndex={-1}
+        aria-hidden
       />
       <span className="flex-1 min-w-0 truncate">
-        <span className="text-[#6e7681]">{dir}</span>
-        <span className="text-[#e6edf3]">{name}</span>
+        <span className="text-[#56606b]">{dir}</span>
+        <span className="text-[#e6edf3] font-medium">{name}</span>
       </span>
-      {isRecommended && (
-        <span className="text-[10px] text-[#34D399] tracking-wider uppercase whitespace-nowrap">
-          ⭐ recommended
-        </span>
-      )}
-    </label>
+      {isRecommended && <CoreBadge selected={isSelected} />}
+    </div>
   )
 }
 
