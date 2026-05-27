@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { Target } from 'lucide-react'
+import mermaid from 'mermaid'
 
 interface ProjectFile {
   name: string
@@ -74,6 +75,10 @@ function filterReason(file: File, path: string): string | null {
 }
 
 type FilterStat = { label: string; count: number }
+
+// A single traced flow: a human title plus its Mermaid `flowchart TD` source.
+type Flow = { title: string; mermaid: string }
+type FlowState = 'idle' | 'loading' | 'done' | 'error'
 
 // Strip the leading project-root folder so `CodeLens/src/App.tsx` → `src/App.tsx`.
 function displayPath(path: string): string {
@@ -149,6 +154,8 @@ function App(): React.JSX.Element {
   const [recommended, setRecommended] = useState<string[]>([])
   const [selected, setSelected] = useState<string[]>([])
   const [documentation, setDocumentation] = useState<string>('')
+  const [flows, setFlows] = useState<Flow[]>([])
+  const [flowState, setFlowState] = useState<FlowState>('idle')
   const [isLoading, setIsLoading] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
   const [copyState, setCopyState] = useState<'idle' | 'copied'>('idle')
@@ -274,12 +281,42 @@ function App(): React.JSX.Element {
     }
   }
 
+  // Lazily trace flows the first time the user opens the Flow View tab. Reuses
+  // the same `selected` files as documentation generation, in one request.
+  const traceFlows = async () => {
+    setFlowState('loading')
+    try {
+      const selectedFiles = files.filter(f => selected.includes(f.path))
+      const fileContents = await Promise.all(
+        selectedFiles.map(async f => ({
+          path: f.path,
+          content: await f.file.text(),
+        }))
+      )
+      const res = await fetch('/api/trace', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files: fileContents }),
+      })
+      if (!res.ok) throw new Error(`trace request failed (${res.status})`)
+      const data = await res.json()
+      setFlows(Array.isArray(data.flows) ? data.flows : [])
+      setFlowState('done')
+    } catch (err) {
+      console.error('trace failed', err)
+      setFlows([])
+      setFlowState('error')
+    }
+  }
+
   const reset = () => {
     setFiles([])
     setFilterStats([])
     setRecommended([])
     setSelected([])
     setDocumentation('')
+    setFlows([])
+    setFlowState('idle')
     setIsLoading(false)
     if (inputRef.current) inputRef.current.value = ''
   }
@@ -343,6 +380,9 @@ function App(): React.JSX.Element {
         {stage === 'output' && (
           <OutputStage
             documentation={documentation}
+            flows={flows}
+            flowState={flowState}
+            onTrace={traceFlows}
             copyState={copyState}
             onCopy={handleCopy}
             onDownload={handleDownload}
@@ -825,18 +865,31 @@ function LoadingStage() {
 
 function OutputStage({
   documentation,
+  flows,
+  flowState,
+  onTrace,
   copyState,
   onCopy,
   onDownload,
   onReset,
 }: {
   documentation: string
+  flows: Flow[]
+  flowState: FlowState
+  onTrace: () => void
   copyState: 'idle' | 'copied'
   onCopy: () => void
   onDownload: () => void
   onReset: () => void
 }) {
+  const [tab, setTab] = useState<'docs' | 'flow'>('docs')
   const sections = useMemo(() => splitIntoSections(documentation), [documentation])
+
+  // Kick off tracing the first time Flow View is opened.
+  const openFlow = () => {
+    setTab('flow')
+    if (flowState === 'idle') onTrace()
+  }
 
   return (
     <div className="animate-fade-in">
@@ -845,26 +898,30 @@ function OutputStage({
           <span className="mr-1">✓</span> Documentation generated
         </p>
         <div className="flex items-center gap-2">
-          <button
-            onClick={onCopy}
-            className={`tb-btn ${copyState === 'copied' ? 'is-success' : ''}`}
-          >
-            {copyState === 'copied' ? (
-              <>
-                <span>✓</span>
-                <span>Copied!</span>
-              </>
-            ) : (
-              <>
-                <span>📋</span>
-                <span>Copy</span>
-              </>
-            )}
-          </button>
-          <button onClick={onDownload} className="tb-btn">
-            <span>⬇</span>
-            <span>Download .md</span>
-          </button>
+          {tab === 'docs' && (
+            <>
+              <button
+                onClick={onCopy}
+                className={`tb-btn ${copyState === 'copied' ? 'is-success' : ''}`}
+              >
+                {copyState === 'copied' ? (
+                  <>
+                    <span>✓</span>
+                    <span>Copied!</span>
+                  </>
+                ) : (
+                  <>
+                    <span>📋</span>
+                    <span>Copy</span>
+                  </>
+                )}
+              </button>
+              <button onClick={onDownload} className="tb-btn">
+                <span>⬇</span>
+                <span>Download .md</span>
+              </button>
+            </>
+          )}
           <button onClick={onReset} className="tb-btn">
             <span>↺</span>
             <span>New Project</span>
@@ -872,22 +929,182 @@ function OutputStage({
         </div>
       </div>
 
-      <div className="surface rounded-lg">
-        <div className="flex items-center gap-2 px-4 h-9 border-b border-[#30363d] text-[11px] text-[#8b949e]">
-          <span className="h-2.5 w-2.5 rounded-full bg-[#30363d]" />
-          <span className="h-2.5 w-2.5 rounded-full bg-[#30363d]" />
-          <span className="h-2.5 w-2.5 rounded-full bg-[#30363d]" />
-          <span className="ml-3 tracking-wide">documentation.md</span>
-        </div>
-        <div className="px-6 py-5 prose-doc">
-          {sections.map((section, i) => (
-            <section key={i} className="doc-section">
-              <ReactMarkdown>{section}</ReactMarkdown>
-            </section>
-          ))}
-        </div>
+      {/* Tabs */}
+      <div className="flex items-center gap-1 border-b border-[#30363d] mb-5">
+        <TabButton active={tab === 'docs'} onClick={() => setTab('docs')}>
+          Documentation
+        </TabButton>
+        <TabButton active={tab === 'flow'} onClick={openFlow}>
+          Flow View
+        </TabButton>
       </div>
+
+      {tab === 'docs' ? (
+        <div className="surface rounded-lg">
+          <div className="flex items-center gap-2 px-4 h-9 border-b border-[#30363d] text-[11px] text-[#8b949e]">
+            <span className="h-2.5 w-2.5 rounded-full bg-[#30363d]" />
+            <span className="h-2.5 w-2.5 rounded-full bg-[#30363d]" />
+            <span className="h-2.5 w-2.5 rounded-full bg-[#30363d]" />
+            <span className="ml-3 tracking-wide">documentation.md</span>
+          </div>
+          <div className="px-6 py-5 prose-doc">
+            {sections.map((section, i) => (
+              <section key={i} className="doc-section">
+                <ReactMarkdown>{section}</ReactMarkdown>
+              </section>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <FlowView flows={flows} state={flowState} />
+      )}
     </div>
+  )
+}
+
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-4 py-2 -mb-px font-mono text-[12px] tracking-wide border-b-2 transition-colors ${
+        active
+          ? 'text-[#34D399] border-[#34D399]'
+          : 'text-[#6e7681] border-transparent hover:text-[#e6edf3]'
+      }`}
+    >
+      {children}
+    </button>
+  )
+}
+
+// Flow View tab content: loading, error/empty, or the rendered diagrams.
+function FlowView({ flows, state }: { flows: Flow[]; state: FlowState }) {
+  if (state === 'loading') {
+    return (
+      <div className="animate-fade-in flex flex-col items-center justify-center min-h-[40vh] text-center">
+        <div className="text-[#34D399] text-5xl mb-5 animate-hex-pulse select-none">
+          ⬡
+        </div>
+        <p className="text-[#e6edf3] text-base">
+          Tracing flows<span className="loading-dots" />
+        </p>
+        <p className="text-[#8b949e] text-xs mt-2">Mapping how your code connects</p>
+      </div>
+    )
+  }
+
+  if (state === 'error') {
+    return <EmptyState text="Flow tracing failed. Start a new project to try again." />
+  }
+
+  if (flows.length === 0) {
+    return (
+      <EmptyState text="No clear flows detected. Try selecting more entry-point files." />
+    )
+  }
+
+  return (
+    <div className="space-y-6 animate-fade-in">
+      {flows.map((flow, i) => (
+        <div key={i} className="surface rounded-lg overflow-hidden">
+          <div className="flex items-center gap-2 px-4 h-9 border-b border-[#30363d] text-[11px] text-[#8b949e]">
+            <span className="text-[#34D399]">▤</span>
+            <span className="tracking-wide">{flow.title}</span>
+          </div>
+          <div className="px-4 py-5 overflow-x-auto flex justify-center">
+            <MermaidDiagram code={flow.mermaid} />
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function EmptyState({ text }: { text: string }) {
+  return (
+    <div className="surface rounded-lg px-6 py-14 text-center animate-fade-in">
+      <div className="text-[#484f58] text-4xl mb-4 select-none">⬡</div>
+      <p className="text-[#8b949e] text-sm font-mono max-w-sm mx-auto">{text}</p>
+    </div>
+  )
+}
+
+// Initialise Mermaid once, themed to match the app's dark/mint aesthetic.
+// `securityLevel: 'loose'` lets node labels render the <b>/<small> HTML.
+let mermaidReady = false
+function initMermaid() {
+  if (mermaidReady) return
+  mermaid.initialize({
+    startOnLoad: false,
+    securityLevel: 'loose',
+    theme: 'dark',
+    fontFamily:
+      'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
+    themeVariables: {
+      darkMode: true,
+      background: '#161b22',
+      primaryColor: '#161b22',
+      primaryBorderColor: '#34D399',
+      primaryTextColor: '#e6edf3',
+      lineColor: '#34D399',
+      secondaryColor: '#1c2530',
+      tertiaryColor: '#0d1117',
+    },
+  })
+  mermaidReady = true
+}
+
+// Renders a Mermaid diagram string into SVG, with loading and error states.
+function MermaidDiagram({ code }: { code: string }) {
+  const [svg, setSvg] = useState('')
+  const [error, setError] = useState(false)
+  // Stable, render-safe unique id (colons stripped — they break DOM lookups).
+  const id = `mmd-${useId().replace(/:/g, '')}`
+
+  useEffect(() => {
+    let cancelled = false
+    initMermaid()
+    mermaid
+      .render(id, code)
+      .then(({ svg }) => {
+        if (!cancelled) {
+          setSvg(svg)
+          setError(false)
+        }
+      })
+      .catch(err => {
+        console.error('mermaid render failed', err)
+        if (!cancelled) setError(true)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [code, id])
+
+  if (error) {
+    return (
+      <p className="text-[#8b949e] text-xs font-mono py-6">
+        Could not render this diagram.
+      </p>
+    )
+  }
+  if (!svg) {
+    return (
+      <p className="text-[#8b949e] text-xs font-mono py-6 animate-pulse">
+        Rendering diagram…
+      </p>
+    )
+  }
+  return (
+    <div className="mermaid-diagram w-full" dangerouslySetInnerHTML={{ __html: svg }} />
   )
 }
 
