@@ -143,7 +143,7 @@ async function walkEntry(
   return []
 }
 
-function App() {
+function App(): React.JSX.Element {
   const [files, setFiles] = useState<ProjectFile[]>([])
   const [filterStats, setFilterStats] = useState<FilterStat[]>([])
   const [recommended, setRecommended] = useState<string[]>([])
@@ -261,6 +261,7 @@ function App() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ files: batch }),
         })
+        if (!res.ok) throw new Error(`analyze request failed (${res.status})`)
         const data = await res.json()
         fullDocs += (data.documentation ?? '') + '\n\n'
       }
