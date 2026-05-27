@@ -35,6 +35,15 @@ Reply ONLY with a JSON array, no other text. Each element has a "title" (string)
 
 If there is no clear user-facing flow, reply with an empty array: []`
 
+// Pull a JSON array out of a model reply that may include code fences or
+// surrounding prose, by slicing between the first '[' and last ']'.
+function extractJsonArray(text: string): string {
+  const stripped = text.replace(/```json\n?|\n?```/g, '').trim()
+  const start = stripped.indexOf('[')
+  const end = stripped.lastIndexOf(']')
+  return start !== -1 && end !== -1 ? stripped.slice(start, end + 1) : stripped
+}
+
 export default async function handler(
   req: TraceRequest,
   res: ApiResponse
@@ -68,8 +77,7 @@ ${files.map(f => `### ${f.path}\n\`\`\`\n${f.content}\n\`\`\``).join('\n\n')}`
 
     const data = (await response.json()) as AnthropicResponse
     const text = data.content[0].text
-    const clean = text.replace(/```json\n?|\n?```/g, '').trim()
-    const flows = JSON.parse(clean)
+    const flows = JSON.parse(extractJsonArray(text))
     res.json({ flows })
   } catch (err) {
     console.error('trace failed', err)
