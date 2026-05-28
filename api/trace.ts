@@ -30,6 +30,8 @@ For each flow:
 Each node MUST show the function name in bold and the file name smaller below, exactly in this shape:
 A["<b>handleLogin()</b><br/><small>LoginScreen.tsx</small>"] --> B["<b>signIn()</b><br/><small>AuthContext.tsx</small>"]
 
+Keep node labels concise — each line should be roughly 25 characters or less. If a function name is long, shorten it to its essential part (e.g. use "supabase.from(memberships)" instead of the full chained call). If a label still needs more than ~25 characters, break it across lines with <br/>.
+
 Reply ONLY with a JSON array, no other text. Each element has a "title" (string) and a "mermaid" (string, a complete flowchart TD diagram). Example:
 [{ "title": "User Login Flow", "mermaid": "flowchart TD\\n    A[\\"<b>handleLogin()</b><br/><small>LoginScreen.tsx</small>\\"] --> B[\\"<b>signIn()</b><br/><small>AuthContext.tsx</small>\\"]" }]
 
