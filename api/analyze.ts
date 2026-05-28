@@ -53,6 +53,7 @@ For each file, provide:
 2. **Key Functions/Components** - List and explain each one
 3. **Dependencies** - What it imports and why
 4. **Notes for new developers** - Things to know before touching this file
+5. **Business Rules & Design Intent** - Infer the *why* behind the code, not just the *what*. Examples: pricing tiers and why they differ, validation rules and what they prevent, forced user flows and the business reason, fallback behaviors and their intent. If the file has no inferable business logic (e.g. a pure UI component), write "No specific business rules — this is structural/presentational."
 
 Format the output in clean Markdown.`
         }]
