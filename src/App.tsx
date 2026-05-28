@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { Target } from 'lucide-react'
 import mermaid from 'mermaid'
 
@@ -971,7 +972,7 @@ function OutputStage({
           <div className="px-6 py-5 prose-doc">
             {sections.map((section, i) => (
               <section key={i} className="doc-section">
-                <ReactMarkdown>{section}</ReactMarkdown>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{section}</ReactMarkdown>
               </section>
             ))}
           </div>
