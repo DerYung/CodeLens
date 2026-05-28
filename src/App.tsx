@@ -11,7 +11,12 @@ interface ProjectFile {
 
 type Stage = 'upload' | 'select' | 'loading' | 'output'
 
-const ALLOWED_EXTS = ['ts', 'tsx', 'js', 'jsx', 'py', 'java', 'json', 'md']
+  const ALLOWED_EXTS = [
+    'ts', 'tsx', 'js', 'jsx',
+    'py', 'java', 'php', 'rb', 'go',
+    'cs', 'rs', 'swift', 'kt', 'cpp', 'c', 'h',
+    'json', 'md', 'yaml', 'yml', 'toml', 'env'
+  ]
 
 // Directory names whose entire subtree is skipped. Matched per path-segment
 // (not substring) so a real folder like `mytarget/` isn't caught by `target`.
@@ -309,6 +314,15 @@ function App(): React.JSX.Element {
     }
   }
 
+  // Return to the file-selection stage, keeping files/recommended/selected so
+  // the user can adjust and regenerate. Clearing documentation drops `stage`
+  // back to 'select'; flow state is reset so a new selection re-traces.
+  const backToSelection = () => {
+    setDocumentation('')
+    setFlows([])
+    setFlowState('idle')
+  }
+
   const reset = () => {
     setFiles([])
     setFilterStats([])
@@ -386,6 +400,7 @@ function App(): React.JSX.Element {
             copyState={copyState}
             onCopy={handleCopy}
             onDownload={handleDownload}
+            onBack={backToSelection}
             onReset={reset}
           />
         )}
@@ -871,6 +886,7 @@ function OutputStage({
   copyState,
   onCopy,
   onDownload,
+  onBack,
   onReset,
 }: {
   documentation: string
@@ -880,6 +896,7 @@ function OutputStage({
   copyState: 'idle' | 'copied'
   onCopy: () => void
   onDownload: () => void
+  onBack: () => void
   onReset: () => void
 }) {
   const [tab, setTab] = useState<'docs' | 'flow'>('docs')
@@ -922,6 +939,10 @@ function OutputStage({
               </button>
             </>
           )}
+          <button onClick={onBack} className="tb-btn">
+            <span>←</span>
+            <span>Back to selection</span>
+          </button>
           <button onClick={onReset} className="tb-btn">
             <span>↺</span>
             <span>New Project</span>
