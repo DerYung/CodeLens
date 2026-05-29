@@ -184,17 +184,23 @@ function App(): React.JSX.Element {
         body: JSON.stringify({ filePaths }),
       })
       const data = await res.json()
-      // The model can return paths that don't exactly match a scanned file
-      // (reformatted/hallucinated) or duplicates. Keep only real, unique file
-      // paths — otherwise a phantom entry inflates the "selected" count with
-      // no checkbox to ever uncheck it.
-      const valid = new Set(filePaths)
+      // The model returns paths relative to the project root (e.g.
+      // "src/App.tsx"), while file.path is the full webkitRelativePath that
+      // includes the root folder (e.g. "Project-main/src/App.tsx"). Match each
+      // recommended path to a real scanned file by suffix and resolve it to the
+      // actual file path, so downstream selection compares like-for-like.
+      // Also dedupe and drop hallucinated paths that match no scanned file —
+      // otherwise a phantom entry inflates the "selected" count with no
+      // checkbox to ever uncheck it.
       const seen = new Set<string>()
-      const rec: string[] = (data.recommended ?? []).filter((p: string) => {
-        if (!valid.has(p) || seen.has(p)) return false
-        seen.add(p)
-        return true
-      })
+      const rec: string[] = []
+      for (const p of (data.recommended ?? []) as string[]) {
+        const match = filePaths.find(fp => fp === p || fp.endsWith(p))
+        if (match && !seen.has(match)) {
+          seen.add(match)
+          rec.push(match)
+        }
+      }
       setRecommended(rec)
       setSelected(rec)
     } catch (err) {
