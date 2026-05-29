@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Target } from 'lucide-react'
+import { Info, Target } from 'lucide-react'
 import mermaid from 'mermaid'
 
 interface ProjectFile {
@@ -594,6 +594,16 @@ function UploadStage({
 
 /* ─────────────────── Stage 2: File Selection ─────────────────── */
 
+const FILTER_TOOLTIPS: Record<string, string> = {
+  'node_modules': 'JavaScript dependencies installed by npm — generated automatically, not your actual code.',
+  'venv / site-packages': 'Python virtual environment files — external libraries installed automatically, not part of your project.',
+  'vendor': 'Third-party dependencies (PHP/Go/Ruby) installed automatically — not your project code.',
+  'build artifacts': 'Files generated during build (dist, .next, out, coverage) — not source code you wrote.',
+  '.git': 'Git version control internals — not source code.',
+  'lock files': 'Auto-generated dependency version locks — too long and not useful for documentation.',
+  'other file types': 'Files in formats CodeLens does not currently support for analysis.',
+}
+
 // Subtle, collapsed-by-default breakdown of what the scanner filtered out.
 // Builds trust ("show me what you dropped") without cluttering the header.
 function FilteredSummary({ stats }: { stats: FilterStat[] }) {
@@ -622,7 +632,17 @@ function FilteredSummary({ stats }: { stats: FilterStat[] }) {
                 key={s.label}
                 className="flex items-center justify-between gap-6 font-mono text-[11px]"
               >
-                <span className="text-[#8b949e]">{s.label}</span>
+                <span className="flex items-center gap-1.5 text-[#8b949e]">
+                  {s.label}
+                  {FILTER_TOOLTIPS[s.label] && (
+                    <span className="relative group">
+                      <Info size={10} className="text-[#484f58] hover:text-[#6e7681] cursor-default transition-colors" />
+                      <span className="pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-full mb-2 z-30 w-52 rounded px-2.5 py-2 bg-[#1c2530] border border-[#30363d] text-[10px] text-[#8b949e] leading-relaxed font-sans tracking-normal normal-case opacity-0 group-hover:opacity-100 transition-opacity duration-150 shadow-xl">
+                        {FILTER_TOOLTIPS[s.label]}
+                      </span>
+                    </span>
+                  )}
+                </span>
                 <span className="text-[#56606b] tabular-nums">{s.count}</span>
               </li>
             ))}
