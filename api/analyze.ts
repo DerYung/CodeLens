@@ -1,6 +1,8 @@
 // Serverless function: sends a batch of files to Claude and returns generated
 // Markdown documentation describing them.
 
+import { logError, rejectIfUnauthorized, type ApiResponse } from './_lib'
+
 interface SourceFile {
   path: string
   content: string
@@ -8,12 +10,8 @@ interface SourceFile {
 
 interface AnalyzeRequest {
   method?: string
+  headers?: Record<string, string | string[] | undefined>
   body: { files: SourceFile[] }
-}
-
-interface ApiResponse {
-  status: (code: number) => ApiResponse
-  json: (body: unknown) => void
 }
 
 interface AnthropicResponse {
@@ -28,6 +26,8 @@ export default async function handler(
     res.status(405).json({ error: 'Method not allowed' })
     return
   }
+
+  if (rejectIfUnauthorized(req.headers?.['x-app-token'], res)) return
 
   const { files } = req.body
 
@@ -64,7 +64,7 @@ Format the output in clean Markdown.`
     const text = data.content[0].text
     res.json({ documentation: text })
   } catch (err) {
-    console.error('analyze failed', err)
+    logError('analyze failed', err)
     res.status(500).json({ error: 'Failed to generate documentation' })
   }
 }

@@ -1,14 +1,12 @@
 // Serverless function: asks Claude which files are most worth documenting and
 // returns a JSON array of recommended file paths.
 
+import { logError, rejectIfUnauthorized, type ApiResponse } from './_lib'
+
 interface RecommendRequest {
   method?: string
+  headers?: Record<string, string | string[] | undefined>
   body: { filePaths: string[] }
-}
-
-interface ApiResponse {
-  status: (code: number) => ApiResponse
-  json: (body: unknown) => void
 }
 
 interface AnthropicResponse {
@@ -23,6 +21,8 @@ export default async function handler(
     res.status(405).json({ error: 'Method not allowed' })
     return
   }
+
+  if (rejectIfUnauthorized(req.headers?.['x-app-token'], res)) return
 
   const { filePaths } = req.body
 
@@ -57,7 +57,7 @@ Example: ["src/App.tsx", "src/contexts/AuthContext.tsx"]`
     const recommended = JSON.parse(clean)
     res.json({ recommended })
   } catch (err) {
-    console.error('recommend failed', err)
+    logError('recommend failed', err)
     res.status(500).json({ error: 'Failed to get recommendations' })
   }
 }

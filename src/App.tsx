@@ -12,6 +12,16 @@ interface ProjectFile {
 
 type Stage = 'upload' | 'select' | 'loading' | 'output'
 
+// Headers for every /api call. The app token (if configured) gates the public
+// endpoints against blind bots; it ships in the bundle, so it is not a hard
+// secret. See api/_lib.ts.
+const apiHeaders = (): Record<string, string> => {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  const token = import.meta.env.VITE_APP_TOKEN
+  if (token) headers['x-app-token'] = token
+  return headers
+}
+
   const ALLOWED_EXTS = [
     'ts', 'tsx', 'js', 'jsx',
     'py', 'java', 'php', 'rb', 'go',
@@ -180,7 +190,7 @@ function App(): React.JSX.Element {
     try {
       const res = await fetch('/api/recommend', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: apiHeaders(),
         body: JSON.stringify({ filePaths }),
       })
       const data = await res.json()
@@ -277,7 +287,7 @@ function App(): React.JSX.Element {
       for (const batch of batches) {
         const res = await fetch('/api/analyze', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: apiHeaders(),
           body: JSON.stringify({ files: batch }),
         })
         if (!res.ok) throw new Error(`analyze request failed (${res.status})`)
@@ -307,7 +317,7 @@ function App(): React.JSX.Element {
       )
       const res = await fetch('/api/trace', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: apiHeaders(),
         body: JSON.stringify({ files: fileContents }),
       })
       if (!res.ok) throw new Error(`trace request failed (${res.status})`)

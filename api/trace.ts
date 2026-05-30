@@ -1,6 +1,8 @@
 // Serverless function: asks Claude to identify 1-2 important user-facing flows
 // and return each as Mermaid `flowchart TD` syntax for visual rendering.
 
+import { logError, rejectIfUnauthorized, type ApiResponse } from './_lib'
+
 interface SourceFile {
   path: string
   content: string
@@ -8,12 +10,8 @@ interface SourceFile {
 
 interface TraceRequest {
   method?: string
+  headers?: Record<string, string | string[] | undefined>
   body: { files: SourceFile[] }
-}
-
-interface ApiResponse {
-  status: (code: number) => ApiResponse
-  json: (body: unknown) => void
 }
 
 interface AnthropicResponse {
@@ -55,6 +53,8 @@ export default async function handler(
     return
   }
 
+  if (rejectIfUnauthorized(req.headers?.['x-app-token'], res)) return
+
   const { files } = req.body
 
   try {
@@ -82,7 +82,7 @@ ${files.map(f => `### ${f.path}\n\`\`\`\n${f.content}\n\`\`\``).join('\n\n')}`
     const flows = JSON.parse(extractJsonArray(text))
     res.json({ flows })
   } catch (err) {
-    console.error('trace failed', err)
+    logError('trace failed', err)
     res.status(500).json({ error: 'Failed to trace flows' })
   }
 }
