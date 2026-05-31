@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -423,11 +423,12 @@ function App(): React.JSX.Element {
     URL.revokeObjectURL(url)
   }
 
-  const toggleSelect = (path: string) => {
+  // Stable identity so memoised FileRows don't all re-render when one toggles.
+  const toggleSelect = useCallback((path: string) => {
     setSelected(prev =>
       prev.includes(path) ? prev.filter(p => p !== path) : [...prev, path]
     )
-  }
+  }, [])
 
   const selectAll = () => setSelected(files.map(f => f.path))
   const selectNone = () => setSelected([])
@@ -987,56 +988,41 @@ function SelectStage({
     { key: 'none', label: 'None', onClick: onSelectNone },
   ] as const
 
-  // ── Virtualised file list ─────────────────────────────────────
-  // A project can hold thousands of files; rendering every row at once freezes
-  // the page. Instead we render only the rows in (and just around) the viewport
-  // and pad the rest with spacer divs, so the DOM stays small no matter the repo
-  // size. listRef also drives the bottom fade hint.
+  // ── File list ─────────────────────────────────────────────────
+  // A project can hold thousands of files. Rather than hand-roll virtualisation
+  // (fragile pixel math), we render every row but tag each `.file-row` with CSS
+  // `content-visibility: auto`, so the browser skips layout/paint for rows that
+  // are off-screen — smooth scrolling with no chance of rows drifting away. Rows
+  // are memoised and selection lookups are O(1) (below) so re-renders stay cheap.
+  // listRef drives the bottom fade hint.
   const listRef = useRef<HTMLDivElement>(null)
+  const scrollRaf = useRef(0)
   const [showFade, setShowFade] = useState(false)
-  const [scrollTop, setScrollTop] = useState(0)
-  const [viewportH, setViewportH] = useState(480)
-  const [rowH, setRowH] = useState(41)
 
+  // Coalesce scroll-driven fade updates to one per frame.
   const updateFade = useCallback(() => {
-    const el = listRef.current
-    if (!el) return
-    setScrollTop(el.scrollTop)
-    setShowFade(el.scrollHeight - el.clientHeight - el.scrollTop > 4)
+    if (scrollRaf.current) return
+    scrollRaf.current = requestAnimationFrame(() => {
+      scrollRaf.current = 0
+      const el = listRef.current
+      if (!el) return
+      setShowFade(el.scrollHeight - el.clientHeight - el.scrollTop > 4)
+    })
   }, [])
 
-  // Keep the viewport height current (it depends on window size via 55vh).
-  useEffect(() => {
-    const el = listRef.current
-    if (!el) return
-    const measure = () => setViewportH(el.clientHeight)
-    measure()
-    const ro = new ResizeObserver(measure)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [])
-
-  // Measure a real row once rows exist so the window stays pixel-accurate even
-  // if the row styling drifts from the 41px estimate.
-  useEffect(() => {
-    const row = listRef.current?.querySelector<HTMLElement>('.file-row')
-    const h = row?.getBoundingClientRect().height
-    if (h && Math.abs(h - rowH) > 0.5) setRowH(h)
-  }, [files, rowH])
+  useEffect(
+    () => () => {
+      if (scrollRaf.current) cancelAnimationFrame(scrollRaf.current)
+    },
+    []
+  )
 
   useEffect(() => {
     updateFade()
   }, [files, updateFade])
 
-  const overscan = 8
-  const winStart = Math.max(0, Math.floor(scrollTop / rowH) - overscan)
-  const winEnd = Math.min(
-    files.length,
-    winStart + Math.ceil(viewportH / rowH) + overscan * 2
-  )
-
   // O(1) membership for per-row checks — `selected` can hold thousands of paths
-  // after "All", and Array.includes per visible row would make scrolling lag.
+  // after "All", and Array.includes per row would make rendering lag.
   const selectedSet = useMemo(() => new Set(selected), [selected])
   const recommendedSet = useMemo(() => new Set(recommended), [recommended])
 
@@ -1070,15 +1056,6 @@ function SelectStage({
             {
               tag: 'Core files',
               text: 'Files marked as recommended were identified by AI as the most important — entry points, auth, core logic. You can still adjust your selection manually.',
-              // The list is virtualised, so the recommended row may not be
-              // rendered. Scroll it into the middle of the viewport first; the
-              // tour re-measures across a couple of frames once it mounts.
-              onEnter: () => {
-                const el = listRef.current
-                if (el) {
-                  el.scrollTop = Math.max(0, firstRecIdx * rowH - el.clientHeight / 2)
-                }
-              },
               get: () => badgeRef.current,
             },
           ]
@@ -1089,7 +1066,7 @@ function SelectStage({
         get: () => generateRef.current,
       },
     ],
-    [firstRecIdx, rowH]
+    [firstRecIdx]
   )
 
   // Auto-open once per browser, after a short beat so the stage has faded in
@@ -1151,23 +1128,16 @@ function SelectStage({
           onScroll={updateFade}
           className="max-h-[55vh] overflow-y-auto cl-scroll"
         >
-          <div style={{ height: winStart * rowH }} />
-          {files.slice(winStart, winEnd).map((file, k) => {
-            const i = winStart + k
-            const isRecommended = recommendedSet.has(file.path)
-            const isSelected = selectedSet.has(file.path)
-            return (
-              <FileRow
-                key={file.path + i}
-                file={file}
-                isRecommended={isRecommended}
-                isSelected={isSelected}
-                onToggle={() => onToggle(file.path)}
-                badgeRef={i === firstRecIdx ? badgeRef : undefined}
-              />
-            )
-          })}
-          <div style={{ height: Math.max(0, (files.length - winEnd) * rowH) }} />
+          {files.map((file, i) => (
+            <FileRow
+              key={file.path + i}
+              file={file}
+              isRecommended={recommendedSet.has(file.path)}
+              isSelected={selectedSet.has(file.path)}
+              onToggle={onToggle}
+              badgeRef={i === firstRecIdx ? badgeRef : undefined}
+            />
+          ))}
         </div>
 
         {/* Fade-out hint that more rows remain below */}
@@ -1227,7 +1197,10 @@ function CoreBadge({ selected }: { selected: boolean }) {
   )
 }
 
-function FileRow({
+// Memoised so toggling one file's selection (or scrolling) doesn't re-render
+// every other row. `onToggle` takes the path so the prop stays referentially
+// stable across renders (the parent passes a single stable callback).
+const FileRow = memo(function FileRow({
   file,
   isRecommended,
   isSelected,
@@ -1237,7 +1210,7 @@ function FileRow({
   file: ProjectFile
   isRecommended: boolean
   isSelected: boolean
-  onToggle: () => void
+  onToggle: (path: string) => void
   badgeRef?: React.Ref<HTMLSpanElement>
 }) {
   const shown = displayPath(file.path)
@@ -1250,11 +1223,11 @@ function FileRow({
       role="checkbox"
       aria-checked={isSelected}
       tabIndex={0}
-      onClick={onToggle}
+      onClick={() => onToggle(file.path)}
       onKeyDown={e => {
         if (e.key === ' ' || e.key === 'Enter') {
           e.preventDefault()
-          onToggle()
+          onToggle(file.path)
         }
       }}
       className={`file-row ${isSelected ? 'is-selected' : ''} ${
@@ -1280,7 +1253,7 @@ function FileRow({
       )}
     </div>
   )
-}
+})
 
 /* ─────────────────── Onboarding Tour ─────────────────── */
 

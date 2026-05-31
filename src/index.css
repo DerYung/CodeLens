@@ -229,6 +229,11 @@ body {
 .file-row {
   position: relative;
   transition: background-color 140ms ease, padding-left 160ms ease;
+  /* The list renders every row, but the browser skips layout/paint for rows
+     scrolled off-screen, keeping a 1000+ file list smooth. contain-intrinsic-size
+     reserves each row's height so the scrollbar is accurate before paint. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 41px;
 }
 .file-row::before {
   content: "";
