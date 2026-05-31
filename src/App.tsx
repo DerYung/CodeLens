@@ -11,7 +11,7 @@ interface ProjectFile {
   file: File
 }
 
-type Stage = 'upload' | 'select' | 'loading' | 'output'
+type Stage = 'upload' | 'scanning' | 'select' | 'loading' | 'output'
 
 // Headers for every /api call. The app token (if configured) gates the public
 // endpoints against blind bots; it ships in the bundle, so it is not a hard
@@ -165,6 +165,14 @@ async function walkEntry(
   return []
 }
 
+// Run a callback only after the browser has had a chance to paint the current
+// state. Two rAFs: the first fires before the pending paint, the second after
+// it — so a screen we just switched to is visible before heavy work blocks the
+// main thread.
+function afterPaint(fn: () => void): void {
+  requestAnimationFrame(() => requestAnimationFrame(fn))
+}
+
 function App(): React.JSX.Element {
   const [files, setFiles] = useState<ProjectFile[]>([])
   const [filterStats, setFilterStats] = useState<FilterStat[]>([])
@@ -174,6 +182,10 @@ function App(): React.JSX.Element {
   const [flows, setFlows] = useState<Flow[]>([])
   const [flowState, setFlowState] = useState<FlowState>('idle')
   const [isLoading, setIsLoading] = useState(false)
+  const [isScanning, setIsScanning] = useState(false)
+  // Number of files discovered so far during a scan (null = count not yet known,
+  // e.g. while a drag-dropped directory tree is still being walked).
+  const [scanCount, setScanCount] = useState<number | null>(null)
   const [isDragging, setIsDragging] = useState(false)
   const [copyState, setCopyState] = useState<'idle' | 'copied'>('idle')
 
@@ -181,6 +193,8 @@ function App(): React.JSX.Element {
 
   const stage: Stage = isLoading
     ? 'loading'
+    : isScanning
+    ? 'scanning'
     : documentation
     ? 'output'
     : files.length
@@ -242,11 +256,22 @@ function App(): React.JSX.Element {
   }
 
   const handleFolderSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const raw = Array.from(e.target.files || []).map(f => ({
-      file: f,
-      path: f.webkitRelativePath || f.name,
-    }))
-    ingestRaw(raw)
+    // Capture the File references synchronously (cheap), then do *all* the
+    // heavy work — path mapping, filtering, and the first render of the file
+    // list — only after the scanning screen has painted. Doing anything heavy
+    // here would delay that paint and the page would look frozen first.
+    const fileObjs = Array.from(e.target.files || [])
+    if (!fileObjs.length) return
+    setScanCount(fileObjs.length)
+    setIsScanning(true)
+    afterPaint(() => {
+      const raw = fileObjs.map(f => ({
+        file: f,
+        path: f.webkitRelativePath || f.name,
+      }))
+      ingestRaw(raw)
+      setIsScanning(false)
+    })
   }
 
   const handleDrop = useCallback(async (e: React.DragEvent<HTMLDivElement>) => {
@@ -257,8 +282,17 @@ function App(): React.JSX.Element {
       .map(it => (it.webkitGetAsEntry?.() as FsEntry | null))
       .filter((x): x is FsEntry => !!x)
     if (entries.length) {
+      // The directory walk is async and can be slow on a deep tree, so show the
+      // scanning screen for its whole duration. Count is unknown until it ends.
+      setScanCount(null)
+      setIsScanning(true)
       const collected = await Promise.all(entries.map(en => walkEntry(en)))
-      ingestRaw(collected.flat())
+      const flat = collected.flat()
+      setScanCount(flat.length)
+      afterPaint(() => {
+        ingestRaw(flat)
+        setIsScanning(false)
+      })
       return
     }
     // Fallback: plain files
@@ -406,6 +440,8 @@ function App(): React.JSX.Element {
             onGenerate={generateDocs}
           />
         )}
+
+        {stage === 'scanning' && <ScanningStage count={scanCount} />}
 
         {stage === 'loading' && <LoadingStage />}
 
@@ -730,20 +766,53 @@ function SelectStage({
     { key: 'none', label: 'None', onClick: onSelectNone },
   ] as const
 
-  // Track scroll position to fade the bottom only while more rows remain below.
+  // ── Virtualised file list ─────────────────────────────────────
+  // A project can hold thousands of files; rendering every row at once freezes
+  // the page. Instead we render only the rows in (and just around) the viewport
+  // and pad the rest with spacer divs, so the DOM stays small no matter the repo
+  // size. listRef also drives the bottom fade hint.
   const listRef = useRef<HTMLDivElement>(null)
   const [showFade, setShowFade] = useState(false)
+  const [scrollTop, setScrollTop] = useState(0)
+  const [viewportH, setViewportH] = useState(480)
+  const [rowH, setRowH] = useState(41)
 
   const updateFade = useCallback(() => {
     const el = listRef.current
     if (!el) return
-    const more = el.scrollHeight - el.clientHeight - el.scrollTop > 4
-    setShowFade(more)
+    setScrollTop(el.scrollTop)
+    setShowFade(el.scrollHeight - el.clientHeight - el.scrollTop > 4)
   }, [])
+
+  // Keep the viewport height current (it depends on window size via 55vh).
+  useEffect(() => {
+    const el = listRef.current
+    if (!el) return
+    const measure = () => setViewportH(el.clientHeight)
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  // Measure a real row once rows exist so the window stays pixel-accurate even
+  // if the row styling drifts from the 41px estimate.
+  useEffect(() => {
+    const row = listRef.current?.querySelector<HTMLElement>('.file-row')
+    const h = row?.getBoundingClientRect().height
+    if (h && Math.abs(h - rowH) > 0.5) setRowH(h)
+  }, [files, rowH])
 
   useEffect(() => {
     updateFade()
   }, [files, updateFade])
+
+  const overscan = 8
+  const winStart = Math.max(0, Math.floor(scrollTop / rowH) - overscan)
+  const winEnd = Math.min(
+    files.length,
+    winStart + Math.ceil(viewportH / rowH) + overscan * 2
+  )
 
   // ── First-visit onboarding tour ───────────────────────────────
   const filesPanelRef = useRef<HTMLDivElement>(null)
@@ -775,6 +844,15 @@ function SelectStage({
             {
               tag: 'Core files',
               text: 'Files marked as recommended were identified by AI as the most important — entry points, auth, core logic. You can still adjust your selection manually.',
+              // The list is virtualised, so the recommended row may not be
+              // rendered. Scroll it into the middle of the viewport first; the
+              // tour re-measures across a couple of frames once it mounts.
+              onEnter: () => {
+                const el = listRef.current
+                if (el) {
+                  el.scrollTop = Math.max(0, firstRecIdx * rowH - el.clientHeight / 2)
+                }
+              },
               get: () => badgeRef.current,
             },
           ]
@@ -785,7 +863,7 @@ function SelectStage({
         get: () => generateRef.current,
       },
     ],
-    [firstRecIdx]
+    [firstRecIdx, rowH]
   )
 
   // Auto-open once per browser, after a short beat so the stage has faded in
@@ -847,7 +925,9 @@ function SelectStage({
           onScroll={updateFade}
           className="max-h-[55vh] overflow-y-auto cl-scroll"
         >
-          {files.map((file, i) => {
+          <div style={{ height: winStart * rowH }} />
+          {files.slice(winStart, winEnd).map((file, k) => {
+            const i = winStart + k
             const isRecommended = recommended.includes(file.path)
             const isSelected = selected.includes(file.path)
             return (
@@ -861,6 +941,7 @@ function SelectStage({
               />
             )
           })}
+          <div style={{ height: Math.max(0, (files.length - winEnd) * rowH) }} />
         </div>
 
         {/* Fade-out hint that more rows remain below */}
@@ -1149,6 +1230,27 @@ function OnboardingTour({
       </div>
     </div>,
     document.body
+  )
+}
+
+/* ─────────────── Stage 2.5: Scanning the project ─────────────── */
+
+// Brief screen shown while the dropped/selected folder is walked and filtered,
+// so a large repo doesn't look like a frozen upload screen. No file contents are
+// read here — only names, paths and sizes — so the copy stays honest.
+function ScanningStage({ count }: { count: number | null }) {
+  return (
+    <div className="animate-fade-in flex flex-col items-center justify-center min-h-[60vh] text-center select-none">
+      <div className="text-[#34D399] text-6xl mb-6 animate-hex-pulse">⬡</div>
+      <p className="text-[#e6edf3] text-base">
+        Scanning project structure<span className="loading-dots" />
+      </p>
+      <p className="text-[#8b949e] text-xs mt-2">
+        {count === null
+          ? 'Reading folder…'
+          : `Found ${count.toLocaleString()} file${count === 1 ? '' : 's'} — filtering out dependencies and build artifacts`}
+      </p>
+    </div>
   )
 }
 
