@@ -23,12 +23,12 @@ const apiHeaders = (): Record<string, string> => {
   return headers
 }
 
-  const ALLOWED_EXTS = [
-    'ts', 'tsx', 'js', 'jsx',
-    'py', 'java', 'php', 'rb', 'go',
-    'cs', 'rs', 'swift', 'kt', 'cpp', 'c', 'h',
-    'json', 'md', 'yaml', 'yml', 'toml', 'env'
-  ]
+const ALLOWED_EXTS = new Set([
+  'ts', 'tsx', 'js', 'jsx',
+  'py', 'java', 'php', 'rb', 'go',
+  'cs', 'rs', 'swift', 'kt', 'cpp', 'c', 'h',
+  'json', 'md', 'yaml', 'yml', 'toml', 'env',
+])
 
 // Directory names whose entire subtree is skipped. Matched per path-segment
 // (not substring) so a real folder like `mytarget/` isn't caught by `target`.
@@ -87,7 +87,7 @@ function filterReason(file: File, path: string): string | null {
   if (IGNORED_FILES.has(file.name)) return 'lock files'
   const ext = file.name.split('.').pop()?.toLowerCase()
   if (IGNORED_EXTS.has(ext || '')) return 'venv / site-packages'
-  if (!ALLOWED_EXTS.includes(ext || '')) return 'other file types'
+  if (!ALLOWED_EXTS.has(ext || '')) return 'other file types'
   return null
 }
 
@@ -186,6 +186,8 @@ function App(): React.JSX.Element {
   // Number of files discovered so far during a scan (null = count not yet known,
   // e.g. while a drag-dropped directory tree is still being walked).
   const [scanCount, setScanCount] = useState<number | null>(null)
+  // How many files have been filtered so far, for a live progress readout.
+  const [scanProgress, setScanProgress] = useState(0)
   const [isDragging, setIsDragging] = useState(false)
   const [copyState, setCopyState] = useState<'idle' | 'copied'>('idle')
 
@@ -235,24 +237,46 @@ function App(): React.JSX.Element {
     }
   }
 
+  // Filter the scanned files in chunks, yielding to the browser between each so
+  // a huge project (tens of thousands of files, incl. node_modules) doesn't lock
+  // the main thread in one long synchronous pass. Owns the end of the scan:
+  // commits the results and clears the scanning flag when finished.
   const ingestRaw = (raw: { file: File; path: string }[]) => {
     const kept: ProjectFile[] = []
     const counts = new Map<string, number>()
-    for (const { file, path } of raw) {
-      const reason = filterReason(file, path)
-      if (reason === null) {
-        kept.push({ name: file.name, path, file })
+    const CHUNK = 3000
+    let i = 0
+
+    const finish = () => {
+      setFiles(kept)
+      setFilterStats(
+        [...counts.entries()]
+          .map(([label, count]) => ({ label, count }))
+          .sort((a, b) => b.count - a.count)
+      )
+      setIsScanning(false)
+      if (kept.length) fetchRecommended(kept.map(f => f.path))
+    }
+
+    const step = () => {
+      const end = Math.min(i + CHUNK, raw.length)
+      for (; i < end; i++) {
+        const { file, path } = raw[i]
+        const reason = filterReason(file, path)
+        if (reason === null) kept.push({ name: file.name, path, file })
+        else counts.set(reason, (counts.get(reason) ?? 0) + 1)
+      }
+      setScanProgress(i)
+      if (i < raw.length) {
+        // Hand the thread back so the scanning screen can paint/animate.
+        setTimeout(step, 0)
       } else {
-        counts.set(reason, (counts.get(reason) ?? 0) + 1)
+        finish()
       }
     }
-    setFiles(kept)
-    setFilterStats(
-      [...counts.entries()]
-        .map(([label, count]) => ({ label, count }))
-        .sort((a, b) => b.count - a.count)
-    )
-    if (kept.length) fetchRecommended(kept.map(f => f.path))
+
+    setScanProgress(0)
+    step()
   }
 
   const handleFolderSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -270,7 +294,6 @@ function App(): React.JSX.Element {
         path: f.webkitRelativePath || f.name,
       }))
       ingestRaw(raw)
-      setIsScanning(false)
     })
   }
 
@@ -289,10 +312,7 @@ function App(): React.JSX.Element {
       const collected = await Promise.all(entries.map(en => walkEntry(en)))
       const flat = collected.flat()
       setScanCount(flat.length)
-      afterPaint(() => {
-        ingestRaw(flat)
-        setIsScanning(false)
-      })
+      afterPaint(() => ingestRaw(flat))
       return
     }
     // Fallback: plain files
@@ -445,7 +465,9 @@ function App(): React.JSX.Element {
           />
         )}
 
-        {stage === 'scanning' && <ScanningStage count={scanCount} />}
+        {stage === 'scanning' && (
+          <ScanningStage count={scanCount} progress={scanProgress} />
+        )}
 
         {stage === 'loading' && <LoadingStage />}
 
@@ -1013,6 +1035,11 @@ function SelectStage({
     winStart + Math.ceil(viewportH / rowH) + overscan * 2
   )
 
+  // O(1) membership for per-row checks — `selected` can hold thousands of paths
+  // after "All", and Array.includes per visible row would make scrolling lag.
+  const selectedSet = useMemo(() => new Set(selected), [selected])
+  const recommendedSet = useMemo(() => new Set(recommended), [recommended])
+
   // ── First-visit onboarding tour ───────────────────────────────
   const filesPanelRef = useRef<HTMLDivElement>(null)
   const selectorsRef = useRef<HTMLDivElement>(null)
@@ -1127,8 +1154,8 @@ function SelectStage({
           <div style={{ height: winStart * rowH }} />
           {files.slice(winStart, winEnd).map((file, k) => {
             const i = winStart + k
-            const isRecommended = recommended.includes(file.path)
-            const isSelected = selected.includes(file.path)
+            const isRecommended = recommendedSet.has(file.path)
+            const isSelected = selectedSet.has(file.path)
             return (
               <FileRow
                 key={file.path + i}
@@ -1437,7 +1464,14 @@ function OnboardingTour({
 // Brief screen shown while the dropped/selected folder is walked and filtered,
 // so a large repo doesn't look like a frozen upload screen. No file contents are
 // read here — only names, paths and sizes — so the copy stays honest.
-function ScanningStage({ count }: { count: number | null }) {
+function ScanningStage({
+  count,
+  progress,
+}: {
+  count: number | null
+  progress: number
+}) {
+  const pct = count && count > 0 ? Math.min(100, Math.round((progress / count) * 100)) : 0
   return (
     <div className="animate-fade-in flex flex-col items-center justify-center min-h-[60vh] text-center select-none">
       <div className="text-[#34D399] text-6xl mb-6 animate-hex-pulse">⬡</div>
@@ -1449,6 +1483,20 @@ function ScanningStage({ count }: { count: number | null }) {
           ? 'Reading folder…'
           : `Found ${count.toLocaleString()} file${count === 1 ? '' : 's'} — filtering out dependencies and build artifacts`}
       </p>
+
+      {count !== null && count > 0 && (
+        <div className="mt-6 w-full max-w-xs">
+          <div className="h-1 rounded-full bg-[#21262d] overflow-hidden">
+            <div
+              className="h-full bg-[#34D399] transition-[width] duration-150"
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+          <p className="mt-2 font-mono text-[10px] text-[#484f58]">
+            {progress.toLocaleString()} / {count.toLocaleString()}
+          </p>
+        </div>
+      )}
     </div>
   )
 }
