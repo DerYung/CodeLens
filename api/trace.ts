@@ -1,7 +1,7 @@
 // Serverless function: asks Claude to identify 1-2 important user-facing flows
 // and return each as Mermaid `flowchart TD` syntax for visual rendering.
 
-import { logError, rejectIfUnauthorized, type ApiResponse } from './_lib'
+import { logError, rejectIfUnauthorized, type ApiResponse } from './_lib.js'
 
 interface SourceFile {
   path: string

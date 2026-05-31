@@ -1,7 +1,7 @@
 // Serverless function: sends a batch of files to Claude and returns generated
 // Markdown documentation describing them.
 
-import { logError, rejectIfUnauthorized, type ApiResponse } from './_lib'
+import { logError, rejectIfUnauthorized, type ApiResponse } from './_lib.js'
 
 interface SourceFile {
   path: string

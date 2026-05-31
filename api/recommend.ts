@@ -1,7 +1,7 @@
 // Serverless function: asks Claude which files are most worth documenting and
 // returns a JSON array of recommended file paths.
 
-import { logError, rejectIfUnauthorized, type ApiResponse } from './_lib'
+import { logError, rejectIfUnauthorized, type ApiResponse } from './_lib.js'
 
 interface RecommendRequest {
   method?: string
