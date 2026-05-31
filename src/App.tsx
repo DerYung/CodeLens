@@ -1154,37 +1154,295 @@ function OnboardingTour({
 
 /* ─────────────────── Stage 3: Loading ─────────────────── */
 
+// Flip-card deck shown while Claude works: the front is a documentation tip, the
+// back is a short code example. Turns dead wait time into something to read.
+type Flashcard = { front: string; back: string; lang: string }
+
+const FLASHCARDS: Flashcard[] = [
+  {
+    front: 'Document your code as you write it — it saves hours of reverse-engineering later.',
+    back: '/**\n * Verifies a session token.\n * @param {string} sid - session id\n * @throws {AuthError} on a bad signature\n */',
+    lang: 'JS / TS',
+  },
+  {
+    front: "When logic isn't self-explanatory, comment the why, not the what.",
+    back: '// bit-shift keeps the value within\n// GPU memory bounds\nconst offset = (raw >> 3) | 0x0F',
+    lang: 'JS / TS',
+  },
+  {
+    front: 'Consistent naming prevents a surprising number of logic bugs.',
+    back: '// vague\nconst v = fetch(x)\n// clear\nconst userProfile = fetchUserData(userId)',
+    lang: 'JS / TS',
+  },
+  {
+    front: 'Clean architecture scales better than a cleverly optimised mess.',
+    back: '// hide the DB behind an adapter so\n// Postgres → Mongo costs zero core changes',
+    lang: 'JS / TS',
+  },
+  {
+    front: 'Write code as if the next reader knows where you live. Be kind — be clear.',
+    back: '// small, named steps beat one dense line\nif (!authorized) return reject()\nperformAction()',
+    lang: 'JS / TS',
+  },
+  {
+    front: 'Refactoring is a habit, not a one-time event.',
+    back: '// flatten nested conditionals early\nif (!user) return null\nreturn user.profile',
+    lang: 'JS / TS',
+  },
+  {
+    front: 'Test the edge cases first — the happy path usually takes care of itself.',
+    back: 'expect(amount(0)).toBe(0)\nexpect(() => amount(-100)).toThrow(RangeError)',
+    lang: 'Test',
+  },
+  {
+    front: "A green CI check means nothing if your critical paths aren't covered.",
+    back: '// cover payment + auth flows before\n// trusting that green checkmark',
+    lang: 'CI / CD',
+  },
+]
+
+type CompanionMood = 'idle' | 'happy' | 'surprised'
+
+// Mouth shapes for Codey, keyed by mood.
+const CODEY_MOUTH: Record<CompanionMood, string> = {
+  idle: 'M 70 88 Q 80 94 90 88',
+  happy: 'M 68 85 Q 80 102 92 85',
+  surprised: 'M 74 88 Q 80 82 86 88 Q 80 94 74 88',
+}
+
+const IDLE_DIALOGS = [
+  'Claude is reading your code…',
+  'Flip a card for a quick example!',
+  'Hang tight — good docs incoming.',
+  'I’m keeping you company. 👀',
+  'Almost there!',
+]
+const ACTION_DIALOGS = [
+  'Next tip!',
+  'Nice — keep going!',
+  'Here’s a good one.',
+  'Boom. Fresh tip.',
+]
+
+const pick = (xs: string[]) => xs[Math.floor(Math.random() * xs.length)]
+
 function LoadingStage() {
-  const lines = useMemo(
-    () => [
-      'parsing source tree...',
-      'extracting symbols...',
-      'reasoning over modules...',
-      'composing documentation...',
-    ],
-    []
+  const [index, setIndex] = useState(0)
+  const [flipped, setFlipped] = useState(false)
+  const [mood, setMood] = useState<CompanionMood>('idle')
+  const [waving, setWaving] = useState(false)
+  const [speech, setSpeech] = useState('Hi! I’ll keep you company while Claude reads your code.')
+
+  const companionRef = useRef<HTMLDivElement>(null)
+  const leftPupil = useRef<SVGCircleElement>(null)
+  const rightPupil = useRef<SVGCircleElement>(null)
+
+  const card = FLASHCARDS[index]
+
+  // React with a mood + matching speech bubble. 'happy' triggers a brief wave.
+  const react = useCallback((next: CompanionMood) => {
+    setMood(next)
+    if (next === 'happy') {
+      setSpeech(pick(ACTION_DIALOGS))
+      setWaving(true)
+      window.setTimeout(() => setWaving(false), 1100)
+    } else if (next === 'surprised') {
+      setSpeech('Ooh — peek at the code on the back!')
+    } else {
+      setSpeech(pick(IDLE_DIALOGS))
+    }
+  }, [])
+
+  const flip = useCallback(() => {
+    setFlipped(f => {
+      react(f ? 'idle' : 'surprised')
+      return !f
+    })
+  }, [react])
+
+  const go = useCallback(
+    (dir: 1 | -1) => {
+      setFlipped(false)
+      setIndex(i => (i + dir + FLASHCARDS.length) % FLASHCARDS.length)
+      react('happy')
+    },
+    [react]
   )
+
+  // Auto-advance the deck so a passive user still sees new tips. Reset the flip
+  // each time so the front (the tip) always leads.
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setFlipped(false)
+      setIndex(i => (i + 1) % FLASHCARDS.length)
+    }, 7000)
+    return () => clearInterval(id)
+  }, [])
+
+  // Idle chatter so Codey feels alive during long waits.
+  useEffect(() => {
+    const id = window.setInterval(() => setSpeech(pick(IDLE_DIALOGS)), 9000)
+    return () => clearInterval(id)
+  }, [])
+
+  // Eyes follow the cursor. Drive the pupils imperatively via refs so tracking
+  // never triggers a React re-render.
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      const el = companionRef.current
+      if (!el) return
+      const r = el.getBoundingClientRect()
+      const dx = e.clientX - (r.left + r.width / 2)
+      const dy = e.clientY - (r.top + r.height / 2)
+      const dist = Math.hypot(dx, dy)
+      const angle = Math.atan2(dy, dx)
+      const travel = Math.min(5.5, dist / 30)
+      const t = `translate(${Math.cos(angle) * travel}, ${Math.sin(angle) * travel})`
+      leftPupil.current?.setAttribute('transform', t)
+      rightPupil.current?.setAttribute('transform', t)
+    }
+    window.addEventListener('mousemove', onMove)
+    return () => window.removeEventListener('mousemove', onMove)
+  }, [])
+
   return (
-    <div className="animate-fade-in flex flex-col items-center justify-center min-h-[60vh] text-center">
-      <div className="text-[#34D399] text-6xl mb-6 animate-hex-pulse select-none">
-        ⬡
+    <div className="animate-fade-in flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
+      {/* Codey companion */}
+      <div className="flex flex-col items-center mb-6 select-none">
+        <div
+          key={speech}
+          className="animate-fade-in relative mb-3 max-w-[15rem] surface rounded-xl px-3.5 py-2 text-[11px] text-[#c9d1d9]"
+        >
+          {speech}
+          <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 rotate-45 w-2 h-2 surface border-l-0 border-t-0" />
+        </div>
+        <div ref={companionRef} className="animate-float">
+          <svg
+            className="w-28 h-28 drop-shadow-[0_0_20px_rgba(52,211,153,0.15)]"
+            viewBox="0 0 160 160"
+          >
+            <line x1="80" y1="45" x2="80" y2="15" stroke="#10b981" strokeWidth="4" strokeDasharray="2 2" />
+            <circle cx="80" cy="15" r="5" fill="#34d399" className="animate-pulse" />
+            <rect x="35" y="40" width="90" height="85" rx="20" fill="#0c0c0c" stroke="#1a1a1a" strokeWidth="4" />
+            <rect x="42" y="47" width="76" height="52" rx="12" fill="#111" stroke="#222" strokeWidth="2" />
+            <rect x="45" y="50" width="70" height="46" rx="9" fill="#030303" />
+            <circle cx="62" cy="70" r="11" fill="#10b981" fillOpacity="0.1" />
+            <circle ref={leftPupil} cx="62" cy="70" r="4.5" fill="#34d399" style={{ transition: 'transform 75ms linear' }} />
+            <circle cx="98" cy="70" r="11" fill="#10b981" fillOpacity="0.1" />
+            <circle ref={rightPupil} cx="98" cy="70" r="4.5" fill="#34d399" style={{ transition: 'transform 75ms linear' }} />
+            <path d={CODEY_MOUTH[mood]} stroke="#34d399" strokeWidth="3.5" fill="none" strokeLinecap="round" style={{ transition: 'all 300ms' }} />
+            <path
+              d="M 35 85 Q 20 80 22 70"
+              stroke="#0c0c0c"
+              strokeWidth="7"
+              fill="none"
+              strokeLinecap="round"
+              style={{
+                transformOrigin: '35px 85px',
+                transform: waving ? 'rotate(-35deg)' : 'rotate(0deg)',
+                transition: 'transform 250ms',
+              }}
+            />
+            <path d="M 125 85 Q 140 90 138 80" stroke="#0c0c0c" strokeWidth="7" fill="none" strokeLinecap="round" />
+            <rect x="65" y="125" width="30" height="8" rx="4" fill="#10b981" className="opacity-80 animate-pulse" />
+          </svg>
+        </div>
       </div>
-      <p className="text-[#e6edf3] text-base">
+
+      <p className="text-[#e6edf3] text-sm">
         Analysing your codebase<span className="loading-dots" />
       </p>
-      <p className="text-[#8b949e] text-xs mt-2">This may take a moment</p>
 
-      <div className="mt-10 surface rounded-lg px-4 py-3 text-[11px] text-[#8b949e] text-left w-full max-w-sm">
-        {lines.map((l, i) => (
-          <div key={l} className="flex items-center gap-2">
-            <span className="text-[#34D399]">
-              {i === lines.length - 1 ? '▸' : '✓'}
-            </span>
-            <span className={i === lines.length - 1 ? 'text-[#e6edf3]' : ''}>
-              {l}
-            </span>
+      {/* Flip-card deck */}
+      <div
+        className="mt-5 w-full max-w-md h-60 cursor-pointer"
+        style={{ perspective: '1200px' }}
+        onClick={flip}
+      >
+        <div
+          className="relative w-full h-full"
+          style={{
+            transformStyle: 'preserve-3d',
+            transition: 'transform 0.6s cubic-bezier(0.4,0,0.2,1)',
+            transform: flipped ? 'rotateY(180deg)' : 'rotateY(0deg)',
+          }}
+        >
+          {/* Front: the tip */}
+          <div
+            className="surface absolute inset-0 rounded-2xl p-6 flex flex-col justify-between text-left"
+            style={{ backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}
+          >
+            <div className="flex items-center justify-between">
+              <span className="font-mono text-[10px] uppercase tracking-wider bg-[#34D399]/10 border border-[#34D399]/20 text-[#34D399] px-2 py-0.5 rounded">
+                Pro tip
+              </span>
+              <span className="font-mono text-[10px] text-[#484f58]">
+                {index + 1} / {FLASHCARDS.length}
+              </span>
+            </div>
+            <p key={index} className="animate-fade-in text-[#e6edf3] text-lg leading-relaxed my-auto">
+              {card.front}
+            </p>
+            <div className="font-mono text-[10px] uppercase tracking-wider text-[#484f58]">
+              Tap to see an example ↺
+            </div>
           </div>
-        ))}
+
+          {/* Back: the code example */}
+          <div
+            className="surface absolute inset-0 rounded-2xl p-6 flex flex-col justify-between text-left"
+            style={{
+              backfaceVisibility: 'hidden',
+              WebkitBackfaceVisibility: 'hidden',
+              transform: 'rotateY(180deg)',
+            }}
+          >
+            <div className="flex items-center justify-between">
+              <span className="font-mono text-[10px] uppercase tracking-wider bg-[#34D399]/10 border border-[#34D399]/20 text-[#34D399] px-2 py-0.5 rounded">
+                Example
+              </span>
+              <span className="font-mono text-[10px] text-[#484f58]">{card.lang}</span>
+            </div>
+            <pre className="my-auto bg-black/50 rounded-lg p-3 border border-white/5 overflow-auto">
+              <code className="font-mono text-xs text-[#6ee7b7] whitespace-pre-wrap leading-relaxed">
+                {card.back}
+              </code>
+            </pre>
+            <div className="font-mono text-[10px] uppercase tracking-wider text-[#484f58]">
+              Tap to flip back ↺
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Dots + nav */}
+      <div className="mt-5 w-full max-w-md flex items-center justify-between">
+        <div className="flex gap-1.5">
+          {FLASHCARDS.map((_, i) => (
+            <span
+              key={i}
+              className={`h-1.5 rounded-full transition-all duration-300 ${
+                i === index ? 'w-5 bg-[#34D399]' : 'w-1.5 bg-white/15'
+              }`}
+            />
+          ))}
+        </div>
+        <div className="flex gap-2">
+          <button
+            onClick={e => { e.stopPropagation(); go(-1) }}
+            className="tb-btn"
+            aria-label="Previous tip"
+          >
+            ‹
+          </button>
+          <button
+            onClick={e => { e.stopPropagation(); go(1) }}
+            className="tb-btn"
+            aria-label="Next tip"
+          >
+            ›
+          </button>
+        </div>
       </div>
     </div>
   )

@@ -107,6 +107,18 @@ body {
   animation: hex-pulse 1.6s ease-in-out infinite;
 }
 
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-12px) rotate(1.5deg);
+  }
+}
+.animate-float {
+  animation: float 4s ease-in-out infinite;
+}
+
 @keyframes loading-dots {
   0%   { content: "."; }
   33%  { content: ".."; }
