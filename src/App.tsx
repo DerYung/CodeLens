@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Info, Target } from 'lucide-react'
@@ -610,6 +611,23 @@ function UploadStage({
 
 /* ─────────────────── Stage 2: File Selection ─────────────────── */
 
+// First-visit onboarding tours. Each stage has its own localStorage flag that
+// gates whether its tour auto-opens; the "Show tour again" link can replay it
+// without clearing the flag.
+const ONBOARDING_KEY = 'codelens.onboarding.completed'
+const OUTPUT_ONBOARDING_KEY = 'codelens.onboarding.output.completed'
+
+// A single coach-mark step: the target element (resolved lazily so refs are
+// read at measure time, not at array-build time) plus its label and copy.
+// `onEnter` runs when the step activates — used to e.g. switch the active tab
+// so the step's target is on screen before it's measured.
+type TourStep = {
+  tag: string
+  text: string
+  get: () => HTMLElement | null
+  onEnter?: () => void
+}
+
 const FILTER_TOOLTIPS: Record<string, string> = {
   'node_modules': 'JavaScript dependencies installed by npm — generated automatically, not your actual code.',
   'venv / site-packages': 'Python virtual environment files — external libraries installed automatically, not part of your project.',
@@ -727,10 +745,66 @@ function SelectStage({
     updateFade()
   }, [files, updateFade])
 
+  // ── First-visit onboarding tour ───────────────────────────────
+  const filesPanelRef = useRef<HTMLDivElement>(null)
+  const selectorsRef = useRef<HTMLDivElement>(null)
+  const badgeRef = useRef<HTMLSpanElement>(null)
+  const generateRef = useRef<HTMLButtonElement>(null)
+  const [showTour, setShowTour] = useState(false)
+
+  // Spotlight the first recommended row's badge (if any recommendations exist).
+  const firstRecIdx = useMemo(
+    () => files.findIndex(f => recommended.includes(f.path)),
+    [files, recommended]
+  )
+
+  const tourSteps = useMemo<TourStep[]>(
+    () => [
+      {
+        tag: 'Scan summary',
+        text: 'Hover any filtered category to see what was excluded and why. We filter dependencies and build artifacts so the AI focuses on your actual code.',
+        get: () => filesPanelRef.current,
+      },
+      {
+        tag: 'Quick selectors',
+        text: 'Quick selectors. CORE picks only the AI-recommended files (recommended for most users). ALL selects every scanned file. NONE clears your selection.',
+        get: () => selectorsRef.current,
+      },
+      ...(firstRecIdx >= 0
+        ? [
+            {
+              tag: 'Core files',
+              text: 'Files marked as recommended were identified by AI as the most important — entry points, auth, core logic. You can still adjust your selection manually.',
+              get: () => badgeRef.current,
+            },
+          ]
+        : []),
+      {
+        tag: 'Generate',
+        text: 'Sends your selected files to Claude in small batches and returns clean Markdown documentation. Takes about 30 seconds depending on file count.',
+        get: () => generateRef.current,
+      },
+    ],
+    [firstRecIdx]
+  )
+
+  // Auto-open once per browser, after a short beat so the stage has faded in
+  // and the recommendation badges have rendered.
+  useEffect(() => {
+    if (localStorage.getItem(ONBOARDING_KEY) === 'true') return
+    const t = setTimeout(() => setShowTour(true), 600)
+    return () => clearTimeout(t)
+  }, [])
+
+  const dismissTour = useCallback(() => {
+    localStorage.setItem(ONBOARDING_KEY, 'true')
+    setShowTour(false)
+  }, [])
+
   return (
     <div className="animate-fade-in">
       <div className="flex items-center justify-between flex-wrap gap-3 mb-3">
-        <div className="flex items-center gap-3">
+        <div ref={filesPanelRef} className="flex items-center gap-3">
           <p className="text-[#34D399] text-sm tracking-wide font-mono">
             <span className="mr-1">▶</span> {files.length} files scanned
           </p>
@@ -738,7 +812,10 @@ function SelectStage({
         </div>
 
         {/* Segmented filter control */}
-        <div className="inline-flex items-center gap-0.5 rounded-lg bg-[#121820] border border-[#21262d] p-0.5">
+        <div
+          ref={selectorsRef}
+          className="inline-flex items-center gap-0.5 rounded-lg bg-[#121820] border border-[#21262d] p-0.5"
+        >
           {segments.map(seg => {
             const active = activeFilter === seg.key
             return (
@@ -780,6 +857,7 @@ function SelectStage({
                 isRecommended={isRecommended}
                 isSelected={isSelected}
                 onToggle={() => onToggle(file.path)}
+                badgeRef={i === firstRecIdx ? badgeRef : undefined}
               />
             )
           })}
@@ -797,6 +875,7 @@ function SelectStage({
       {/* Sticky CTA — stays visible while the page scrolls */}
       <div className="sticky bottom-0 pt-2 pb-1 bg-gradient-to-t from-[#0d1117] via-[#0d1117] to-transparent">
         <button
+          ref={generateRef}
           onClick={onGenerate}
           disabled={selected.length === 0}
           className="cta-btn"
@@ -807,6 +886,21 @@ function SelectStage({
           </span>
         </button>
       </div>
+
+      {/* Replay the onboarding tour on demand. Portaled to <body> so it (and
+          the tour) escape the `.animate-fade-in` transform, which would
+          otherwise act as the containing block for these fixed elements. */}
+      {createPortal(
+        <button
+          onClick={() => setShowTour(true)}
+          className="fixed bottom-3 left-3 z-20 inline-flex items-center gap-1 font-mono text-[10px] text-[#484f58] hover:text-[#34D399] transition-colors"
+        >
+          <span aria-hidden>↻</span> Show tour again
+        </button>,
+        document.body
+      )}
+
+      {showTour && <OnboardingTour steps={tourSteps} onClose={dismissTour} />}
     </div>
   )
 }
@@ -831,11 +925,13 @@ function FileRow({
   isRecommended,
   isSelected,
   onToggle,
+  badgeRef,
 }: {
   file: ProjectFile
   isRecommended: boolean
   isSelected: boolean
   onToggle: () => void
+  badgeRef?: React.Ref<HTMLSpanElement>
 }) {
   const shown = displayPath(file.path)
   const lastSlash = shown.lastIndexOf('/')
@@ -870,8 +966,189 @@ function FileRow({
         <span className="text-[#56606b]">{dir}</span>
         <span className="text-[#e6edf3] font-medium">{name}</span>
       </span>
-      {isRecommended && <CoreBadge selected={isSelected} />}
+      {isRecommended && (
+        <span ref={badgeRef}>
+          <CoreBadge selected={isSelected} />
+        </span>
+      )}
     </div>
+  )
+}
+
+/* ─────────────────── Onboarding Tour ─────────────────── */
+
+// Vanilla coach-mark overlay: a spotlight cut-out over the current target with
+// a tooltip card beside it. The backdrop is pointer-events:none (only the card
+// is interactive) so the user can keep clicking the page if they ignore the
+// tour. Owns its own step + fade state; calls onClose once fully dismissed.
+function OnboardingTour({
+  steps,
+  onClose,
+}: {
+  steps: TourStep[]
+  onClose: () => void
+}) {
+  const [step, setStep] = useState(0)
+  const [show, setShow] = useState(false)
+  const [rect, setRect] = useState<DOMRect | null>(null)
+
+  // Steps can shrink/grow if recommendations arrive mid-tour; keep in bounds.
+  const clamped = Math.min(step, steps.length - 1)
+  const current = steps[clamped]
+  const isLast = clamped === steps.length - 1
+
+  // Fade in on mount.
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setShow(true))
+    return () => cancelAnimationFrame(id)
+  }, [])
+
+  // Fade out, then unmount via onClose.
+  const finish = useCallback(() => {
+    setShow(false)
+    window.setTimeout(onClose, 200)
+  }, [onClose])
+
+  const next = useCallback(() => {
+    if (isLast) finish()
+    else setStep(s => s + 1)
+  }, [isLast, finish])
+
+  const back = useCallback(() => setStep(s => Math.max(0, s - 1)), [])
+
+  // Esc skips the tour.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') finish()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [finish])
+
+  // Activate the step, then measure its target and keep the spotlight in sync
+  // as the page scrolls or resizes. `onEnter` may change the DOM (e.g. switch
+  // tabs), so the target is resolved/measured across animation frames — not
+  // synchronously — and scrolled into view (the Core badge can sit inside the
+  // scrollable file list).
+  useEffect(() => {
+    current?.onEnter?.()
+
+    const measure = () => {
+      const node = current?.get() ?? null
+      setRect(node ? node.getBoundingClientRect() : null)
+    }
+
+    let raf2 = 0
+    const raf1 = requestAnimationFrame(() => {
+      current?.get()?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      measure()
+      raf2 = requestAnimationFrame(measure)
+    })
+    const settle = window.setTimeout(measure, 360)
+    window.addEventListener('scroll', measure, true)
+    window.addEventListener('resize', measure)
+    return () => {
+      cancelAnimationFrame(raf1)
+      cancelAnimationFrame(raf2)
+      clearTimeout(settle)
+      window.removeEventListener('scroll', measure, true)
+      window.removeEventListener('resize', measure)
+    }
+  }, [current])
+
+  // Spotlight box = target rect + a little padding.
+  const pad = 6
+  const spot = rect && {
+    top: rect.top - pad,
+    left: rect.left - pad,
+    width: rect.width + pad * 2,
+    height: rect.height + pad * 2,
+  }
+
+  // Card sits below the target, or above it when the target is low on screen.
+  // Horizontally aligned to the target but clamped on-screen.
+  const cardW = Math.min(320, window.innerWidth - 32)
+  const gap = 12
+  const placeAbove = rect ? rect.top > window.innerHeight * 0.55 : false
+  const cardLeft = rect
+    ? Math.max(16, Math.min(rect.left, window.innerWidth - cardW - 16))
+    : 16
+  const cardStyle: React.CSSProperties =
+    spot && rect
+      ? placeAbove
+        ? { left: cardLeft, bottom: window.innerHeight - spot.top + gap, width: cardW }
+        : { left: cardLeft, top: spot.top + spot.height + gap, width: cardW }
+      : { left: 16, bottom: 16, width: cardW }
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-40 transition-opacity duration-200"
+      style={{ opacity: show ? 1 : 0, pointerEvents: 'none' }}
+    >
+      {spot ? (
+        <div
+          aria-hidden
+          className="fixed rounded-lg transition-all duration-300 ease-out"
+          style={{
+            top: spot.top,
+            left: spot.left,
+            width: spot.width,
+            height: spot.height,
+            boxShadow:
+              '0 0 0 9999px rgba(13,17,23,0.72), 0 0 0 1px rgba(52,211,153,0.55), 0 0 22px -2px rgba(52,211,153,0.45)',
+          }}
+        />
+      ) : (
+        <div aria-hidden className="fixed inset-0" style={{ background: 'rgba(13,17,23,0.72)' }} />
+      )}
+
+      <div
+        key={clamped}
+        role="dialog"
+        aria-label={`Onboarding step ${clamped + 1} of ${steps.length}`}
+        className="fixed z-50 surface rounded-lg shadow-2xl animate-fade-in pointer-events-auto"
+        style={cardStyle}
+      >
+        <div className="px-4 pt-3.5 pb-3">
+          <div className="flex items-center justify-between mb-2">
+            <span className="font-mono text-[10px] tracking-[0.15em] uppercase text-[#34D399]">
+              {current.tag}
+            </span>
+            <span className="font-mono text-[10px] text-[#6e7681] tabular-nums">
+              {clamped + 1} / {steps.length}
+            </span>
+          </div>
+          <p className="text-[13px] leading-relaxed text-[#c9d1d9] font-sans">
+            {current.text}
+          </p>
+        </div>
+        <div className="flex items-center justify-between px-4 py-2.5 border-t border-[#30363d]">
+          <button
+            onClick={finish}
+            className="font-mono text-[11px] text-[#6e7681] hover:text-[#8b949e] transition-colors"
+          >
+            Skip tour
+          </button>
+          <div className="flex items-center gap-1.5">
+            {clamped > 0 && (
+              <button
+                onClick={back}
+                className="font-mono text-[11px] text-[#8b949e] hover:text-[#e6edf3] px-2 py-1 transition-colors"
+              >
+                Back
+              </button>
+            )}
+            <button
+              onClick={next}
+              className="font-mono text-[11px] font-semibold rounded-md bg-[#34D399] text-[#0d1117] px-3 py-1 hover:bg-[#10B981] transition-colors"
+            >
+              {isLast ? 'Got it' : 'Next'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body
   )
 }
 
@@ -940,10 +1217,58 @@ function OutputStage({
   const sections = useMemo(() => splitIntoSections(documentation), [documentation])
 
   // Kick off tracing the first time Flow View is opened.
-  const openFlow = () => {
+  const openFlow = useCallback(() => {
     setTab('flow')
     if (flowState === 'idle') onTrace()
-  }
+  }, [flowState, onTrace])
+
+  // ── Onboarding tour for the results stage ─────────────────────
+  const docHeaderRef = useRef<HTMLDivElement>(null)
+  const exportRef = useRef<HTMLSpanElement>(null)
+  const navRef = useRef<HTMLSpanElement>(null)
+  const flowTabRef = useRef<HTMLButtonElement>(null)
+  const [showTour, setShowTour] = useState(false)
+
+  const tourSteps = useMemo<TourStep[]>(
+    () => [
+      {
+        tag: 'Documentation',
+        text: "Your AI-generated documentation, split into sections — each file's purpose, key functions, dependencies, and the business rules behind the code.",
+        get: () => docHeaderRef.current,
+        onEnter: () => setTab('docs'),
+      },
+      {
+        tag: 'Export',
+        text: 'Copy the Markdown to your clipboard, or download it as a .md file to commit straight into your repo.',
+        get: () => exportRef.current,
+        onEnter: () => setTab('docs'),
+      },
+      {
+        tag: 'Navigate',
+        text: 'Go back to adjust your file selection and regenerate, or start over with a brand-new project.',
+        get: () => navRef.current,
+        onEnter: () => setTab('docs'),
+      },
+      {
+        tag: 'Flow View',
+        text: 'Flow View asks Claude to trace your 1–2 most important user flows and renders them as visual flowchart diagrams — showing how functions call across files.',
+        get: () => flowTabRef.current,
+        onEnter: openFlow,
+      },
+    ],
+    [openFlow]
+  )
+
+  useEffect(() => {
+    if (localStorage.getItem(OUTPUT_ONBOARDING_KEY) === 'true') return
+    const t = setTimeout(() => setShowTour(true), 600)
+    return () => clearTimeout(t)
+  }, [])
+
+  const dismissTour = useCallback(() => {
+    localStorage.setItem(OUTPUT_ONBOARDING_KEY, 'true')
+    setShowTour(false)
+  }, [])
 
   return (
     <div className="animate-fade-in">
@@ -953,7 +1278,7 @@ function OutputStage({
         </p>
         <div className="flex items-center gap-2">
           {tab === 'docs' && (
-            <>
+            <span ref={exportRef} className="flex items-center gap-2">
               <button
                 onClick={onCopy}
                 className={`tb-btn ${copyState === 'copied' ? 'is-success' : ''}`}
@@ -974,16 +1299,18 @@ function OutputStage({
                 <span>⬇</span>
                 <span>Download .md</span>
               </button>
-            </>
+            </span>
           )}
-          <button onClick={onBack} className="tb-btn">
-            <span>←</span>
-            <span>Back to selection</span>
-          </button>
-          <button onClick={onReset} className="tb-btn">
-            <span>↺</span>
-            <span>New Project</span>
-          </button>
+          <span ref={navRef} className="flex items-center gap-2">
+            <button onClick={onBack} className="tb-btn">
+              <span>←</span>
+              <span>Back to selection</span>
+            </button>
+            <button onClick={onReset} className="tb-btn">
+              <span>↺</span>
+              <span>New Project</span>
+            </button>
+          </span>
         </div>
       </div>
 
@@ -992,14 +1319,17 @@ function OutputStage({
         <TabButton active={tab === 'docs'} onClick={() => setTab('docs')}>
           Documentation
         </TabButton>
-        <TabButton active={tab === 'flow'} onClick={openFlow}>
+        <TabButton active={tab === 'flow'} onClick={openFlow} btnRef={flowTabRef}>
           Flow View
         </TabButton>
       </div>
 
       {tab === 'docs' ? (
         <div className="surface rounded-lg">
-          <div className="flex items-center gap-2 px-4 h-9 border-b border-[#30363d] text-[11px] text-[#8b949e]">
+          <div
+            ref={docHeaderRef}
+            className="flex items-center gap-2 px-4 h-9 border-b border-[#30363d] text-[11px] text-[#8b949e]"
+          >
             <span className="h-2.5 w-2.5 rounded-full bg-[#30363d]" />
             <span className="h-2.5 w-2.5 rounded-full bg-[#30363d]" />
             <span className="h-2.5 w-2.5 rounded-full bg-[#30363d]" />
@@ -1016,6 +1346,25 @@ function OutputStage({
       ) : (
         <FlowView flows={flows} state={flowState} />
       )}
+
+      {/* Replay the results tour on demand. Portaled to <body> so it escapes
+          the `.animate-fade-in` transform (the containing block for fixed
+          descendants). Switch back to the docs tab so every step's target
+          exists when the tour runs. */}
+      {createPortal(
+        <button
+          onClick={() => {
+            setTab('docs')
+            setShowTour(true)
+          }}
+          className="fixed bottom-3 left-3 z-20 inline-flex items-center gap-1 font-mono text-[10px] text-[#484f58] hover:text-[#34D399] transition-colors"
+        >
+          <span aria-hidden>↻</span> Show tour again
+        </button>,
+        document.body
+      )}
+
+      {showTour && <OnboardingTour steps={tourSteps} onClose={dismissTour} />}
     </div>
   )
 }
@@ -1024,13 +1373,16 @@ function TabButton({
   active,
   onClick,
   children,
+  btnRef,
 }: {
   active: boolean
   onClick: () => void
   children: React.ReactNode
+  btnRef?: React.Ref<HTMLButtonElement>
 }) {
   return (
     <button
+      ref={btnRef}
       onClick={onClick}
       className={`px-4 py-2 -mb-px font-mono text-[12px] tracking-wide border-b-2 transition-colors ${
         active
