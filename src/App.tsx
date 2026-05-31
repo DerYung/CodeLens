@@ -413,11 +413,15 @@ function App(): React.JSX.Element {
   const selectNone = () => setSelected([])
   const selectRecommended = () => setSelected(recommended)
 
+  // The landing page is a wide two-column hero; every other stage reads best in
+  // a narrow column. Keep the header aligned with whichever the body uses.
+  const contentWidth = stage === 'upload' ? 'max-w-6xl' : 'max-w-3xl'
+
   return (
     <div className="min-h-screen flex flex-col bg-[#0d1117] text-[#e6edf3]">
-      <Header />
+      <Header width={contentWidth} />
 
-      <main className="flex-1 w-full max-w-3xl mx-auto px-6 py-10">
+      <main className={`flex-1 w-full ${contentWidth} mx-auto px-6 py-10`}>
         {stage === 'upload' && (
           <UploadStage
             isDragging={isDragging}
@@ -474,10 +478,10 @@ function App(): React.JSX.Element {
 
 /* ─────────────────── Header ─────────────────── */
 
-function Header() {
+function Header({ width = 'max-w-3xl' }: { width?: string }) {
   return (
     <header className="border-b border-[#30363d] bg-[#0d1117]/80 backdrop-blur supports-[backdrop-filter]:bg-[#0d1117]/60 sticky top-0 z-10">
-      <div className="max-w-3xl mx-auto px-6 h-14 flex items-center gap-3">
+      <div className={`${width} mx-auto px-6 h-14 flex items-center gap-3`}>
         <LensLogo />
         <h1 className="text-[#34D399] font-bold tracking-[0.08em] text-sm uppercase">
           CodeLens
@@ -560,6 +564,44 @@ function LensLogo() {
 
 /* ─────────────────── Stage 1: Upload ─────────────────── */
 
+// Landing-page mascot chatter. Kept honest — no fake timings or invented output.
+const LANDING_IDLE = [
+  'Drag your project folder anywhere on the page.',
+  'I map your files into clean documentation.',
+  'Works with React, Python, Java, and more.',
+  'Hit “Upload your project” to get started.',
+]
+
+const LANG_REACTIONS: Record<string, string> = {
+  '.tsx': 'React + TypeScript — I map components, props, and hooks.',
+  '.ts': 'TypeScript — I document types, modules, and generics.',
+  '.js': 'JavaScript — I summarise modules and functions.',
+  '.jsx': 'React JSX — I break down component trees.',
+  '.py': 'Python — I read docstrings, classes, and functions.',
+  '.java': 'Java — I document classes, interfaces, and hierarchies.',
+  '.json': 'JSON — I explain config and build settings.',
+  '.md': 'Markdown — I fold existing docs into the output.',
+}
+const LANGS = ['.tsx', '.ts', '.js', '.jsx', '.py', '.java', '.json', '.md']
+
+const HOW_STEPS = [
+  {
+    n: '01',
+    title: 'Drop or select your folder',
+    desc: 'No config. Dependencies and build artifacts are filtered out automatically.',
+  },
+  {
+    n: '02',
+    title: 'We recommend the key files',
+    desc: 'Claude flags entry points, auth, and core logic worth documenting.',
+  },
+  {
+    n: '03',
+    title: 'Get clean Markdown docs',
+    desc: 'Copy or download structured documentation, plus an optional flow diagram.',
+  },
+]
+
 function UploadStage({
   isDragging,
   setIsDragging,
@@ -572,75 +614,232 @@ function UploadStage({
   onDrop: (e: React.DragEvent<HTMLDivElement>) => void
 }) {
   const [showHow, setShowHow] = useState(false)
+  const [replay, setReplay] = useState(0)
+  const [mood, setMood] = useState<CompanionMood>('idle')
+  const [waving, setWaving] = useState(false)
+  const [speech, setSpeech] = useState(
+    'Hi! Drop your project folder, or hit Upload to begin.'
+  )
+
+  const companionRef = useRef<HTMLDivElement>(null)
+  const leftPupil = useRef<SVGCircleElement>(null)
+  const rightPupil = useRef<SVGCircleElement>(null)
+
+  const say = useCallback((next: CompanionMood, text: string) => {
+    setMood(next)
+    setSpeech(text)
+    if (next === 'happy') {
+      setWaving(true)
+      window.setTimeout(() => setWaving(false), 1000)
+    }
+  }, [])
+
+  // Eyes follow the cursor (imperative via refs — no re-render per move).
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      const el = companionRef.current
+      if (!el) return
+      const r = el.getBoundingClientRect()
+      const dx = e.clientX - (r.left + r.width / 2)
+      const dy = e.clientY - (r.top + r.height / 2)
+      const dist = Math.hypot(dx, dy)
+      const angle = Math.atan2(dy, dx)
+      const travel = Math.min(5.5, dist / 35)
+      const t = `translate(${Math.cos(angle) * travel}, ${Math.sin(angle) * travel})`
+      leftPupil.current?.setAttribute('transform', t)
+      rightPupil.current?.setAttribute('transform', t)
+    }
+    window.addEventListener('mousemove', onMove)
+    return () => window.removeEventListener('mousemove', onMove)
+  }, [])
+
+  // Gentle idle chatter so Codey feels alive without being noisy.
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setMood('idle')
+      setSpeech(pick(LANDING_IDLE))
+    }, 15000)
+    return () => clearInterval(id)
+  }, [])
+
+  // Drop a folder anywhere on the page, not just on the card. A counter avoids
+  // flicker as drag events bubble across child elements.
+  useEffect(() => {
+    let depth = 0
+    const hasFiles = (e: DragEvent) => e.dataTransfer?.types?.includes('Files')
+    const onOver = (e: DragEvent) => {
+      if (hasFiles(e)) e.preventDefault()
+    }
+    const onEnter = (e: DragEvent) => {
+      if (!hasFiles(e)) return
+      depth++
+      setIsDragging(true)
+    }
+    const onLeave = () => {
+      depth = Math.max(0, depth - 1)
+      if (depth === 0) setIsDragging(false)
+    }
+    const onDropWin = (e: DragEvent) => {
+      e.preventDefault()
+      depth = 0
+      setIsDragging(false)
+      onDrop(e as unknown as React.DragEvent<HTMLDivElement>)
+    }
+    window.addEventListener('dragover', onOver)
+    window.addEventListener('dragenter', onEnter)
+    window.addEventListener('dragleave', onLeave)
+    window.addEventListener('drop', onDropWin)
+    return () => {
+      window.removeEventListener('dragover', onOver)
+      window.removeEventListener('dragenter', onEnter)
+      window.removeEventListener('dragleave', onLeave)
+      window.removeEventListener('drop', onDropWin)
+    }
+  }, [onDrop, setIsDragging])
+
+  const handleHow = () => {
+    setShowHow(true)
+    setReplay(r => r + 1)
+    say('idle', 'Here’s the three-step flow, start to finish →')
+  }
 
   return (
     <div
-      onDragOver={e => {
-        e.preventDefault()
-        setIsDragging(true)
-      }}
-      onDragLeave={() => setIsDragging(false)}
-      onDrop={onDrop}
       className={`hero ${
         isDragging ? 'is-dragging' : ''
-      } animate-fade-in flex flex-col justify-center min-h-[72vh] rounded-2xl px-2`}
+      } animate-fade-in rounded-2xl px-2`}
     >
-      <div className="font-mono text-xs tracking-[0.3em] text-[#34D399] uppercase mb-4">
-        CodeLens <span className="text-[#6e7681]">//</span> Doc Generator
-      </div>
-
-      <h1 className="font-serif text-4xl md:text-5xl lg:text-6xl text-[#e6edf3] mb-6 leading-[1.05]">
-        Your codebase,
-        <br />
-        documenting itself.
-      </h1>
-
-      <p className="font-sans text-lg text-[#8b949e] max-w-xl mb-8 leading-relaxed">
-        AI-powered documentation that explains your project from its own
-        source. Drop a folder and get clear, structured docs — no config, no
-        setup headaches.
-      </p>
-
-      <div className="flex flex-col sm:flex-row gap-4">
-        <button onClick={onClick} className="hero-btn-primary font-mono text-sm">
-          Upload your project
-        </button>
-        <button
-          onClick={() => setShowHow(v => !v)}
-          className="hero-btn-secondary font-mono text-sm"
-        >
-          See how it works
-        </button>
-      </div>
-
-      {showHow && (
-        <div className="animate-fade-in surface rounded-lg mt-6 px-5 py-4 max-w-xl font-mono text-[12px] text-[#8b949e] space-y-2">
-          <div>
-            <span className="text-[#34D399]">1 ▸</span> Drop or select your
-            project folder
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-12 items-center min-h-[72vh]">
+        {/* Left: copy + actions */}
+        <div className="lg:col-span-7 flex flex-col justify-center">
+          <div className="font-mono text-xs tracking-[0.3em] text-[#34D399] uppercase mb-4">
+            CodeLens <span className="text-[#6e7681]">//</span> Doc Generator
           </div>
-          <div>
-            <span className="text-[#34D399]">2 ▸</span> We recommend the key
-            files worth documenting
+
+          <h1 className="font-serif text-4xl md:text-5xl lg:text-6xl text-[#e6edf3] mb-6 leading-[1.05]">
+            Your codebase,
+            <br />
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#6ee7b7] via-[#34D399] to-[#10B981]">
+              documenting itself.
+            </span>
+          </h1>
+
+          <p className="font-sans text-lg text-[#8b949e] max-w-xl mb-8 leading-relaxed">
+            AI-powered documentation that explains your project from its own
+            source. Drop a folder and get clear, structured docs — no config, no
+            setup headaches.
+          </p>
+
+          <div className="flex flex-col sm:flex-row gap-4">
+            <button
+              onClick={onClick}
+              onMouseEnter={() => say('happy', 'Let’s scan your files!')}
+              onMouseLeave={() => say('idle', pick(LANDING_IDLE))}
+              className="hero-btn-primary font-mono text-sm"
+            >
+              Upload your project
+            </button>
+            <button
+              onClick={handleHow}
+              onMouseEnter={() => say('surprised', 'Curious how it works? →')}
+              onMouseLeave={() => say('idle', pick(LANDING_IDLE))}
+              className="hero-btn-secondary font-mono text-sm"
+            >
+              See how it works
+            </button>
           </div>
-          <div>
-            <span className="text-[#34D399]">3 ▸</span> Claude generates clean
-            Markdown you can copy or download
+
+          {/* Reactive language chips */}
+          <div className="mt-8 flex flex-col gap-2">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 font-mono text-[11px] text-[#484f58]">
+              <span className="text-[#34D399]">$ supports</span>
+              {LANGS.map(lang => (
+                <button
+                  key={lang}
+                  onClick={() => say('surprised', LANG_REACTIONS[lang])}
+                  className="px-1.5 py-0.5 rounded text-[#8b949e] hover:text-[#e6edf3] hover:bg-white/5 transition-colors"
+                >
+                  {lang}
+                </button>
+              ))}
+            </div>
+            <div className="font-mono text-[11px] tracking-[0.15em] uppercase text-[#34D399]/60">
+              v0.0.0 <span className="opacity-50">·</span> drag &amp; drop anywhere{' '}
+              <span className="opacity-50">·</span> powered by claude
+            </div>
           </div>
         </div>
-      )}
 
-      <div className="mt-8 flex flex-col gap-2">
-        <div className="inline-flex items-center gap-2 font-mono text-[11px] text-[#484f58]">
-          <span className="text-[#34D399]">$</span>
-          <span>supports</span>
-          <code className="text-[#8b949e]">.tsx .ts .js .jsx .py .java .json .md</code>
-        </div>
-        <div className="font-mono text-[11px] tracking-[0.15em] uppercase text-[#34D399]/60">
-          v0.0.0 <span className="opacity-50">·</span> drag &amp; drop anywhere{' '}
-          <span className="opacity-50">·</span> powered by claude
+        {/* Right: Codey companion + How-it-works panel */}
+        <div className="lg:col-span-5 flex flex-col items-center">
+          <div className="w-full max-w-md surface rounded-3xl p-6 flex flex-col items-center">
+            <div
+              key={speech}
+              className="animate-fade-in relative mb-4 w-full min-h-[3rem] rounded-xl bg-[#0b0f15] border border-[#21262d] px-4 py-2.5 text-center text-[12px] text-[#c9d1d9] flex items-center justify-center"
+            >
+              {speech}
+              <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 rotate-45 w-2.5 h-2.5 bg-[#0b0f15] border-r border-b border-[#21262d]" />
+            </div>
+
+            <div ref={companionRef} className="animate-float my-2 cursor-pointer">
+              <CodeyRobot
+                mood={mood}
+                waving={waving}
+                leftPupilRef={leftPupil}
+                rightPupilRef={rightPupil}
+                className="w-36 h-36"
+              />
+            </div>
+
+            {/* How it works — the real flow, revealed/animated on demand */}
+            <div className="w-full mt-4 rounded-2xl bg-[#080b0f] border border-[#21262d] p-4 text-left">
+              <div className="flex items-center justify-between pb-2 mb-1 border-b border-white/5 font-mono text-[10px] uppercase tracking-wider text-[#6e7681]">
+                <span>How it works</span>
+                <span className="text-[#34D399]">3 steps</span>
+              </div>
+              {showHow ? (
+                <ol key={replay} className="space-y-3 pt-2">
+                  {HOW_STEPS.map((s, i) => (
+                    <li
+                      key={s.n}
+                      className="animate-fade-in flex gap-3"
+                      style={{ animationDelay: `${i * 140}ms`, animationFillMode: 'both' }}
+                    >
+                      <span className="font-mono text-[11px] text-[#34D399] pt-0.5">{s.n}</span>
+                      <span>
+                        <span className="block text-[12px] text-[#e6edf3]">{s.title}</span>
+                        <span className="block text-[11px] text-[#8b949e] leading-relaxed">{s.desc}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+              ) : (
+                <p className="pt-3 pb-2 text-[11px] text-[#8b949e] leading-relaxed">
+                  Drop a folder and CodeLens turns your source into clean docs.
+                  Press “See how it works” for the full flow.
+                </p>
+              )}
+            </div>
+          </div>
         </div>
       </div>
+
+      {/* Full-screen drop overlay — appears whenever files are dragged over the page */}
+      {isDragging &&
+        createPortal(
+          <div className="fixed inset-4 z-50 flex flex-col items-center justify-center rounded-3xl border-4 border-dashed border-[#34D399] bg-[#05080c]/95 backdrop-blur-sm pointer-events-none animate-fade-in">
+            <div className="animate-float mb-4">
+              <CodeyRobot mood="happy" waving className="w-44 h-44" />
+            </div>
+            <h2 className="font-serif text-3xl text-[#e6edf3] mb-2">
+              Drop your folder anywhere
+            </h2>
+            <p className="font-mono text-sm text-[#8b949e]">
+              Codey is ready to map, scan, and document your project.
+            </p>
+          </div>,
+          document.body
+        )}
     </div>
   )
 }
@@ -1312,6 +1511,56 @@ const CODEY_MOUTH: Record<CompanionMood, string> = {
   surprised: 'M 74 88 Q 80 82 86 88 Q 80 94 74 88',
 }
 
+// CodeLens's mascot. Reused on the landing page and the loading screen so the
+// product feels consistent. Pupils are exposed via refs so a parent can drive
+// cursor-tracking imperatively (no re-render per mouse move); mood sets the
+// mouth and `waving` raises the left arm.
+function CodeyRobot({
+  mood = 'idle',
+  waving = false,
+  leftPupilRef,
+  rightPupilRef,
+  className = 'w-28 h-28',
+}: {
+  mood?: CompanionMood
+  waving?: boolean
+  leftPupilRef?: React.Ref<SVGCircleElement>
+  rightPupilRef?: React.Ref<SVGCircleElement>
+  className?: string
+}) {
+  return (
+    <svg
+      className={`${className} drop-shadow-[0_0_20px_rgba(52,211,153,0.15)]`}
+      viewBox="0 0 160 160"
+    >
+      <line x1="80" y1="45" x2="80" y2="15" stroke="#10b981" strokeWidth="4" strokeDasharray="2 2" />
+      <circle cx="80" cy="15" r="5" fill="#34d399" className="animate-pulse" />
+      <rect x="35" y="40" width="90" height="85" rx="20" fill="#0c0c0c" stroke="#1a1a1a" strokeWidth="4" />
+      <rect x="42" y="47" width="76" height="52" rx="12" fill="#111" stroke="#222" strokeWidth="2" />
+      <rect x="45" y="50" width="70" height="46" rx="9" fill="#030303" />
+      <circle cx="62" cy="70" r="11" fill="#10b981" fillOpacity="0.1" />
+      <circle ref={leftPupilRef} cx="62" cy="70" r="4.5" fill="#34d399" style={{ transition: 'transform 75ms linear' }} />
+      <circle cx="98" cy="70" r="11" fill="#10b981" fillOpacity="0.1" />
+      <circle ref={rightPupilRef} cx="98" cy="70" r="4.5" fill="#34d399" style={{ transition: 'transform 75ms linear' }} />
+      <path d={CODEY_MOUTH[mood]} stroke="#34d399" strokeWidth="3.5" fill="none" strokeLinecap="round" style={{ transition: 'all 300ms' }} />
+      <path
+        d="M 35 85 Q 20 80 22 70"
+        stroke="#0c0c0c"
+        strokeWidth="7"
+        fill="none"
+        strokeLinecap="round"
+        style={{
+          transformOrigin: '35px 85px',
+          transform: waving ? 'rotate(-35deg)' : 'rotate(0deg)',
+          transition: 'transform 250ms',
+        }}
+      />
+      <path d="M 125 85 Q 140 90 138 80" stroke="#0c0c0c" strokeWidth="7" fill="none" strokeLinecap="round" />
+      <rect x="65" y="125" width="30" height="8" rx="4" fill="#10b981" className="opacity-80 animate-pulse" />
+    </svg>
+  )
+}
+
 const IDLE_DIALOGS = [
   'Claude is reading your code…',
   'Flip a card for a quick example!',
@@ -1419,35 +1668,12 @@ function LoadingStage() {
           <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 rotate-45 w-2 h-2 surface border-l-0 border-t-0" />
         </div>
         <div ref={companionRef} className="animate-float">
-          <svg
-            className="w-28 h-28 drop-shadow-[0_0_20px_rgba(52,211,153,0.15)]"
-            viewBox="0 0 160 160"
-          >
-            <line x1="80" y1="45" x2="80" y2="15" stroke="#10b981" strokeWidth="4" strokeDasharray="2 2" />
-            <circle cx="80" cy="15" r="5" fill="#34d399" className="animate-pulse" />
-            <rect x="35" y="40" width="90" height="85" rx="20" fill="#0c0c0c" stroke="#1a1a1a" strokeWidth="4" />
-            <rect x="42" y="47" width="76" height="52" rx="12" fill="#111" stroke="#222" strokeWidth="2" />
-            <rect x="45" y="50" width="70" height="46" rx="9" fill="#030303" />
-            <circle cx="62" cy="70" r="11" fill="#10b981" fillOpacity="0.1" />
-            <circle ref={leftPupil} cx="62" cy="70" r="4.5" fill="#34d399" style={{ transition: 'transform 75ms linear' }} />
-            <circle cx="98" cy="70" r="11" fill="#10b981" fillOpacity="0.1" />
-            <circle ref={rightPupil} cx="98" cy="70" r="4.5" fill="#34d399" style={{ transition: 'transform 75ms linear' }} />
-            <path d={CODEY_MOUTH[mood]} stroke="#34d399" strokeWidth="3.5" fill="none" strokeLinecap="round" style={{ transition: 'all 300ms' }} />
-            <path
-              d="M 35 85 Q 20 80 22 70"
-              stroke="#0c0c0c"
-              strokeWidth="7"
-              fill="none"
-              strokeLinecap="round"
-              style={{
-                transformOrigin: '35px 85px',
-                transform: waving ? 'rotate(-35deg)' : 'rotate(0deg)',
-                transition: 'transform 250ms',
-              }}
-            />
-            <path d="M 125 85 Q 140 90 138 80" stroke="#0c0c0c" strokeWidth="7" fill="none" strokeLinecap="round" />
-            <rect x="65" y="125" width="30" height="8" rx="4" fill="#10b981" className="opacity-80 animate-pulse" />
-          </svg>
+          <CodeyRobot
+            mood={mood}
+            waving={waving}
+            leftPupilRef={leftPupil}
+            rightPupilRef={rightPupil}
+          />
         </div>
       </div>
 
